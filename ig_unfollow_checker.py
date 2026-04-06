@@ -1,24 +1,31 @@
 """
 Instagram Unfollow Checker — All-in-One
 
-Takes an Instagram data export zip file and:
-1. Extracts followers & following lists
-2. Computes who's not following you back
-3. Checks each account via Playwright (through your VPN) to see if it still exists
-4. Outputs clickable HTML files for active + deleted accounts
+Modes:
+  1. ZIP MODE:  Give it your Instagram data export zip and it:
+     - Shows who's not following you back
+     - Shows who follows you but you don't follow back (fans)
+     - Shows mutual follows, pending requests, recent unfollows
+     - Checks which "not following back" accounts are deleted/deactivated
+
+  2. LIST MODE:  Give it a text file of usernames and it checks if they exist
 
 Requirements:
   pip install playwright
   python -m playwright install chromium
 
 Usage:
-  1. Download your data from Instagram (Settings > Your Activity > Download Your Information > HTML format)
-  2. Turn on your VPN
-  3. Run:
-     python3 ig_unfollow_checker.py instagram-yourname-2026-04-04-XXXXXXXX.zip
+  # From Instagram export zip
+  python3 ig_unfollow_checker.py export.zip
 
-  Resume after rate limit:
-     python3 ig_unfollow_checker.py instagram-yourname-2026-04-04-XXXXXXXX.zip --start-at 500
+  # From a plain text list of usernames
+  python3 ig_unfollow_checker.py --check-list usernames.txt
+
+  # Just analyze the zip (no browser checks)
+  python3 ig_unfollow_checker.py export.zip --analyze-only
+
+  # Resume after rate limit
+  python3 ig_unfollow_checker.py export.zip --start-at 500
 """
 
 import re
@@ -28,7 +35,6 @@ import json
 import random
 import argparse
 import zipfile
-import tempfile
 from pathlib import Path
 from datetime import datetime
 from playwright.sync_api import sync_playwright
@@ -42,6 +48,10 @@ BATCH_PAUSE = 180
 PAGE_TIMEOUT = 45000
 SETTLE_MS = 2500
 
+
+# ---------------------------------------------------------------------------
+# Extraction
+# ---------------------------------------------------------------------------
 
 def extract_usernames_from_zip(zip_path: str) -> tuple[set, set]:
     """Extract followers and following usernames from an IG export zip."""
@@ -72,6 +82,51 @@ def extract_usernames_from_zip(zip_path: str) -> tuple[set, set]:
     return following, followers
 
 
+def extract_extra_lists_from_zip(zip_path: str) -> dict[str, list[str]]:
+    """Extract additional lists from the export: pending requests, recent unfollows, etc."""
+    extras = {}
+    with zipfile.ZipFile(zip_path, 'r') as z:
+        names = z.namelist()
+
+        mapping = {
+            "pending_follow_requests": "Pending Follow Requests (you sent)",
+            "recent_follow_requests": "Recent Follow Requests (you sent)",
+            "recently_unfollowed_profiles": "Recently Unfollowed by You",
+            "follow_requests_you've_received": "Follow Requests You've Received",
+        }
+
+        for filename_part, label in mapping.items():
+            match = next((n for n in names if filename_part in n and n.endswith('.html')), None)
+            if match:
+                with z.open(match) as f:
+                    html = f.read().decode('utf-8')
+                # Try both URL formats
+                users = re.findall(r'instagram\.com/_u/([a-zA-Z0-9_.]+)', html)
+                if not users:
+                    users = re.findall(r'instagram\.com/([a-zA-Z0-9_.]+)', html)
+                if users:
+                    extras[label] = sorted(set(users))
+
+    return extras
+
+
+def load_usernames_from_file(filepath: str) -> list[str]:
+    """Load usernames from a plain text file (one per line)."""
+    content = Path(filepath).read_text()
+    usernames = []
+    for line in content.splitlines():
+        line = line.strip().lstrip("@")
+        # Strip full URLs down to username
+        line = re.sub(r'https?://(?:www\.)?instagram\.com/(?:_u/)?', '', line).rstrip('/')
+        if line and not line.startswith("#"):
+            usernames.append(line)
+    return usernames
+
+
+# ---------------------------------------------------------------------------
+# Account checking
+# ---------------------------------------------------------------------------
+
 def check_account(page, username: str) -> dict:
     """Navigate to profile and determine if it exists from page title."""
     url = f"https://www.instagram.com/{username}/"
@@ -100,6 +155,80 @@ def check_account(page, username: str) -> dict:
     except Exception as e:
         return {"username": username, "status": "ERROR", "error": str(e)[:200]}
 
+
+def run_checks(usernames: list[str], start_at: int, results_path: Path, show_browser: bool) -> tuple[list[dict], bool]:
+    """Run Playwright checks on a list of usernames. Returns (results, stopped_early)."""
+    to_check = usernames[start_at:]
+    if not to_check:
+        print("All accounts already checked.")
+        return [], False
+
+    # Load previous results if resuming
+    if start_at > 0 and results_path.exists():
+        prev = json.loads(results_path.read_text())
+        all_results = prev.get("results", [])
+        print(f"  Loaded {len(all_results)} previous results")
+    else:
+        all_results = []
+
+    print(f"\nChecking {len(to_check)} accounts with Playwright...")
+    print("For best safety, use a VPN (see README).")
+    est = len(to_check) * (MIN_DELAY + MAX_DELAY) / 2 / 60
+    print(f"Estimated time: {est:.0f} min")
+    print("-" * 60)
+
+    login_wall_streak = 0
+    stopped_early = False
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=not show_browser)
+        context = browser.new_context(
+            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            viewport={"width": 1280, "height": 800},
+        )
+        page = context.new_page()
+
+        for i, username in enumerate(to_check):
+            result = check_account(page, username)
+            all_results.append(result)
+
+            status = result["status"]
+            icon = {"EXISTS": "+", "EXISTS_PRIVATE": "~", "NOT_FOUND": "X",
+                    "LOGIN_WALL": "L", "UNKNOWN": "?", "ERROR": "E"}
+            idx = i + 1 + start_at
+            total = len(usernames)
+            print(f"  [{icon.get(status, '?')}] {idx}/{total}  {username:30s}  {status}")
+
+            if status == "LOGIN_WALL":
+                login_wall_streak += 1
+                if login_wall_streak >= 3:
+                    print(f"\n*** Rate limited. Resume with: --start-at {idx}")
+                    stopped_early = True
+                    break
+            else:
+                login_wall_streak = 0
+
+            # Save after every check
+            results_path.write_text(json.dumps({
+                "timestamp": datetime.now().isoformat(),
+                "total_checked": len(all_results),
+                "results": all_results,
+            }, indent=2))
+
+            if (i + 1) % BATCH_SIZE == 0 and i + 1 < len(to_check):
+                print(f"\n  --- Batch pause ({BATCH_PAUSE // 60}min) ---\n")
+                time.sleep(BATCH_PAUSE)
+            else:
+                time.sleep(random.uniform(MIN_DELAY, MAX_DELAY))
+
+        browser.close()
+
+    return all_results, stopped_early
+
+
+# ---------------------------------------------------------------------------
+# HTML generation
+# ---------------------------------------------------------------------------
 
 def generate_html(accounts: list[str], title: str, subtitle: str, color: str, filename: str, track_clicks: bool = False):
     """Generate a clickable HTML file."""
@@ -160,111 +289,201 @@ function updateStats() {
     Path(filename).write_text(html)
 
 
+def generate_summary_html(stats: dict, lists: dict, filename: str):
+    """Generate a dashboard HTML with all lists and stats."""
+    html = '''<html><head><title>Instagram Analysis</title>
+<style>
+body{font-family:monospace;font-size:14px;padding:20px;background:#111;color:#eee;max-width:900px;margin:0 auto}
+h1{color:#4fc3f7;border-bottom:1px solid #333;padding-bottom:10px}
+h2{color:#4fc3f7;margin-top:30px}
+.stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin:20px 0}
+.stat{background:#1a1a2e;padding:16px;border-radius:8px;border:1px solid #333}
+.stat .num{font-size:28px;font-weight:bold;color:#4fc3f7}
+.stat .label{color:#888;margin-top:4px}
+a{color:#4fc3f7;text-decoration:none}a:hover{text-decoration:underline;color:#fff}
+.file-link{display:inline-block;background:#1a1a2e;padding:8px 16px;border-radius:6px;border:1px solid #333;margin:4px}
+.section{margin:20px 0}
+details{margin:8px 0}
+details summary{cursor:pointer;color:#4fc3f7;padding:4px 0}
+details summary:hover{color:#fff}
+ul{padding-left:20px}li{padding:2px 0}
+</style></head><body>
+'''
+    html += '<h1>Instagram Account Analysis</h1>\n'
+
+    # Stats grid
+    html += '<div class="stat-grid">\n'
+    for label, value in stats.items():
+        html += f'<div class="stat"><div class="num">{value}</div><div class="label">{label}</div></div>\n'
+    html += '</div>\n'
+
+    # File links
+    html += '<h2>Generated Reports</h2>\n'
+    file_descriptions = {
+        "not_following_back.html": ("Not Following You Back", "#4fc3f7"),
+        "fans_you_dont_follow.html": ("Fans (Follow You, You Don't Follow Back)", "#66bb6a"),
+        "mutuals.html": ("Mutuals", "#ab47bc"),
+        "active_not_following_back.html": ("Active (Not Following Back, Verified Existing)", "#4fc3f7"),
+        "deleted_accounts.html": ("Deleted / Deactivated Accounts", "#ff5252"),
+        "inconclusive_accounts.html": ("Inconclusive (Rate Limited)", "#ff9800"),
+    }
+    for fname, (desc, _) in file_descriptions.items():
+        html += f'<a class="file-link" href="{fname}">{desc}</a>\n'
+
+    # Extra lists
+    for label, users in lists.items():
+        html += f'\n<details><summary>{label} ({len(users)})</summary><ul>\n'
+        for u in users[:200]:
+            html += f'<li><a href="https://www.instagram.com/{u}/" target="_blank">{u}</a></li>\n'
+        if len(users) > 200:
+            html += f'<li>... and {len(users) - 200} more</li>\n'
+        html += '</ul></details>\n'
+
+    html += '</body></html>'
+    Path(filename).write_text(html)
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
 def main():
-    parser = argparse.ArgumentParser(description="Instagram Unfollow Checker")
-    parser.add_argument("zipfile", help="Path to Instagram data export zip")
+    parser = argparse.ArgumentParser(
+        description="Instagram Unfollow Checker",
+        epilog="DISCLAIMER: This tool is provided as-is for personal use. "
+               "Use at your own risk. The author is not responsible for any "
+               "account restrictions, rate limiting, or actions taken by Instagram. "
+               "Using a VPN is recommended."
+    )
+    parser.add_argument("zipfile", nargs="?", help="Path to Instagram data export zip")
+    parser.add_argument("--check-list", help="Check a plain text file of usernames (one per line)")
+    parser.add_argument("--analyze-only", action="store_true", help="Only analyze the zip, skip browser checks")
     parser.add_argument("--start-at", type=int, default=0, help="Resume from position N")
     parser.add_argument("--output-dir", default=".", help="Output directory")
     parser.add_argument("--show-browser", action="store_true")
     args = parser.parse_args()
 
+    if not args.zipfile and not args.check_list:
+        parser.error("Provide an Instagram export zip or --check-list <file>")
+
+    out = Path(args.output_dir)
+    out.mkdir(exist_ok=True)
+    results_path = out / "results.json"
+
+    # =======================================================================
+    # MODE 1: Check a plain list of usernames
+    # =======================================================================
+    if args.check_list:
+        filepath = args.check_list
+        if not Path(filepath).exists():
+            print(f"Error: {filepath} not found.")
+            sys.exit(1)
+
+        usernames = load_usernames_from_file(filepath)
+        print(f"Loaded {len(usernames)} usernames from {filepath}")
+
+        all_results, stopped_early = run_checks(usernames, args.start_at, results_path, args.show_browser)
+
+        exists = sorted([r['username'] for r in all_results if r['status'] in ('EXISTS', 'EXISTS_PRIVATE')])
+        not_found = sorted([r['username'] for r in all_results if r['status'] == 'NOT_FOUND'])
+        inconclusive = sorted([r['username'] for r in all_results if r['status'] in ('LOGIN_WALL', 'ERROR', 'UNKNOWN')])
+
+        generate_html(exists, "Existing Accounts", "These accounts still exist.", "#4fc3f7", str(out / "existing_accounts.html"))
+        generate_html(not_found, "Deleted / Unavailable", "These profiles no longer exist.", "#ff5252", str(out / "deleted_accounts.html"))
+        if inconclusive:
+            generate_html(inconclusive, "Inconclusive", "Could not determine. Recheck with a fresh VPN.", "#ff9800", str(out / "inconclusive_accounts.html"))
+
+        print("\n" + "=" * 60)
+        print("DONE")
+        print("=" * 60)
+        print(f"  Existing:     {len(exists)}")
+        print(f"  Deleted:      {len(not_found)}")
+        print(f"  Inconclusive: {len(inconclusive)}")
+        if stopped_early:
+            print(f"\nResume: python3 ig_unfollow_checker.py --check-list {filepath} --start-at {len(all_results)}")
+        return
+
+    # =======================================================================
+    # MODE 2: Full analysis from Instagram export zip
+    # =======================================================================
     zip_path = args.zipfile
     if not Path(zip_path).exists():
         print(f"Error: {zip_path} not found.")
         sys.exit(1)
 
-    out = Path(args.output_dir)
-    out.mkdir(exist_ok=True)
-
-    # --- Step 1: Extract from zip ---
+    # --- Step 1: Extract and analyze ---
     print(f"Extracting from {zip_path}...")
     following, followers = extract_usernames_from_zip(zip_path)
+    extras = extract_extra_lists_from_zip(zip_path)
+
     not_following_back = sorted(following - followers)
+    fans = sorted(followers - following)
+    mutuals = sorted(following & followers)
 
-    print(f"  Following: {len(following)}")
-    print(f"  Followers: {len(followers)}")
-    print(f"  Not following you back: {len(not_following_back)}")
+    print(f"  Following:             {len(following)}")
+    print(f"  Followers:             {len(followers)}")
+    print(f"  Mutuals:               {len(mutuals)}")
+    print(f"  Not following back:    {len(not_following_back)}")
+    print(f"  Fans (you don't follow): {len(fans)}")
+    for label, users in extras.items():
+        print(f"  {label}: {len(users)}")
 
-    # Save the raw list
-    (out / "usernames.txt").write_text("\n".join(not_following_back) + "\n")
+    # Generate all analysis HTMLs
     generate_html(not_following_back,
                   "Not Following You Back",
-                  f"From export: {Path(zip_path).stem}",
+                  f"You follow them, they don't follow you. ({Path(zip_path).stem})",
                   "#4fc3f7",
-                  str(out / "all_not_following_back.html"))
+                  str(out / "not_following_back.html"),
+                  track_clicks=True)
+
+    generate_html(fans,
+                  "Fans — Follow You But You Don't Follow Back",
+                  "These people follow you but you haven't followed them back.",
+                  "#66bb6a",
+                  str(out / "fans_you_dont_follow.html"),
+                  track_clicks=True)
+
+    generate_html(mutuals,
+                  "Mutuals",
+                  "You follow each other.",
+                  "#ab47bc",
+                  str(out / "mutuals.html"))
+
+    # Extra lists from export
+    for label, users in extras.items():
+        safe_name = re.sub(r'[^a-z0-9]+', '_', label.lower()).strip('_') + ".html"
+        generate_html(users, label, f"From your Instagram export.", "#ff9800", str(out / safe_name))
+
+    # Save raw text lists
+    (out / "not_following_back.txt").write_text("\n".join(not_following_back) + "\n")
+    (out / "fans_you_dont_follow.txt").write_text("\n".join(fans) + "\n")
+    (out / "mutuals.txt").write_text("\n".join(mutuals) + "\n")
+
+    # Summary dashboard
+    stats = {
+        "Following": len(following),
+        "Followers": len(followers),
+        "Mutuals": len(mutuals),
+        "Not Following Back": len(not_following_back),
+        "Fans": len(fans),
+    }
+    generate_summary_html(stats, extras, str(out / "dashboard.html"))
+
+    print(f"\n  Generated: dashboard.html, not_following_back.html, fans_you_dont_follow.html, mutuals.html")
+
+    if args.analyze_only:
+        print("\n--analyze-only: skipping browser checks.")
+        print("DONE")
+        return
 
     if not not_following_back:
-        print("Everyone follows you back!")
+        print("\nEveryone follows you back!")
         return
 
-    # --- Step 2: Check accounts ---
-    usernames = not_following_back[args.start_at:]
-    if not usernames:
-        print("All accounts already checked.")
-        return
+    # --- Step 2: Check which "not following back" accounts still exist ---
+    all_results, stopped_early = run_checks(not_following_back, args.start_at, results_path, args.show_browser)
 
-    # Load previous results if resuming
-    results_path = out / "results.json"
-    if args.start_at > 0 and results_path.exists():
-        prev = json.loads(results_path.read_text())
-        all_results = prev.get("results", [])
-        print(f"  Loaded {len(all_results)} previous results")
-    else:
-        all_results = []
-
-    print(f"\nChecking {len(usernames)} accounts with Playwright...")
-    print("MAKE SURE YOUR VPN IS ON.")
-    est = len(usernames) * (MIN_DELAY + MAX_DELAY) / 2 / 60
-    print(f"Estimated time: {est:.0f} min")
-    print("-" * 60)
-
-    login_wall_streak = 0
-    stopped_early = False
-
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=not args.show_browser)
-        context = browser.new_context(
-            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            viewport={"width": 1280, "height": 800},
-        )
-        page = context.new_page()
-
-        for i, username in enumerate(usernames):
-            result = check_account(page, username)
-            all_results.append(result)
-
-            status = result["status"]
-            icon = {"EXISTS": "+", "EXISTS_PRIVATE": "~", "NOT_FOUND": "X",
-                    "LOGIN_WALL": "L", "UNKNOWN": "?", "ERROR": "E"}
-            idx = i + 1 + args.start_at
-            total = len(not_following_back)
-            print(f"  [{icon.get(status, '?')}] {idx}/{total}  {username:30s}  {status}")
-
-            if status == "LOGIN_WALL":
-                login_wall_streak += 1
-                if login_wall_streak >= 3:
-                    print(f"\n*** Rate limited. Resume with: --start-at {idx}")
-                    stopped_early = True
-                    break
-            else:
-                login_wall_streak = 0
-
-            # Save after every check
-            results_path.write_text(json.dumps({
-                "timestamp": datetime.now().isoformat(),
-                "total_checked": len(all_results),
-                "results": all_results,
-            }, indent=2))
-
-            if (i + 1) % BATCH_SIZE == 0 and i + 1 < len(usernames):
-                print(f"\n  --- Batch pause ({BATCH_PAUSE // 60}min) ---\n")
-                time.sleep(BATCH_PAUSE)
-            else:
-                time.sleep(random.uniform(MIN_DELAY, MAX_DELAY))
-
-        browser.close()
-
-    # --- Step 3: Generate output ---
+    # --- Step 3: Generate checked output ---
     exists = sorted([r['username'] for r in all_results if r['status'] in ('EXISTS', 'EXISTS_PRIVATE')])
     not_found = sorted([r['username'] for r in all_results if r['status'] == 'NOT_FOUND'])
     inconclusive = sorted([r['username'] for r in all_results if r['status'] in ('LOGIN_WALL', 'ERROR', 'UNKNOWN')])
@@ -289,23 +508,31 @@ def main():
                       "#ff9800",
                       str(out / "inconclusive_accounts.html"))
 
-    # Summary
+    # Final summary
     print("\n" + "=" * 60)
     print("DONE")
     print("=" * 60)
-    print(f"  Active accounts:    {len(exists)}")
-    print(f"  Deleted accounts:   {len(not_found)}")
-    print(f"  Inconclusive:       {len(inconclusive)}")
+    print(f"  Following:           {len(following)}")
+    print(f"  Followers:           {len(followers)}")
+    print(f"  Mutuals:             {len(mutuals)}")
+    print(f"  Not following back:  {len(not_following_back)}")
+    print(f"  Fans:                {len(fans)}")
+    print(f"  Confirmed active:    {len(exists)}")
+    print(f"  Confirmed deleted:   {len(not_found)}")
+    print(f"  Inconclusive:        {len(inconclusive)}")
     print()
     print("Output files:")
-    print(f"  active_not_following_back.html  — {len(exists)} accounts (click-tracked)")
+    print(f"  dashboard.html                 — overview of everything")
+    print(f"  not_following_back.html         — {len(not_following_back)} accounts")
+    print(f"  fans_you_dont_follow.html       — {len(fans)} accounts")
+    print(f"  mutuals.html                   — {len(mutuals)} accounts")
+    print(f"  active_not_following_back.html  — {len(exists)} accounts (verified existing)")
     print(f"  deleted_accounts.html           — {len(not_found)} accounts")
     if inconclusive:
         print(f"  inconclusive_accounts.html      — {len(inconclusive)} accounts")
-    print(f"  results.json                    — full raw data")
+    print(f"  results.json                    — raw check data")
 
     if stopped_early:
-        resume_at = args.start_at + len(all_results) - (0 if args.start_at == 0 else len(all_results) - len(usernames))
         print(f"\nResume: python3 ig_unfollow_checker.py {zip_path} --start-at {len(all_results)}")
 
 

@@ -1,16 +1,24 @@
 # ig-unfollow-checker
 
-Find out which Instagram accounts in your "not following back" list are **deleted or deactivated** — so you don't waste time clicking dead profiles.
+Analyze your Instagram following/followers and find out which accounts are **deleted, deactivated, or ghost profiles** — without logging into any third-party app.
 
-Takes your Instagram data export zip, computes who's not following you back, then checks each profile with a headless browser to see if it still exists. Outputs clickable HTML files.
+**What it does:**
+- **Not following you back** — who you follow that doesn't follow you
+- **Fans** — who follows you that you don't follow back
+- **Mutuals** — accounts you follow each other
+- **Ghost detector** — checks each profile with a real browser to see if it still exists
+- **Pending requests, recent unfollows** — everything in your export
+- **Bulk username checker** — give it any list of usernames to check if they still exist
+
+No Instagram login. No third-party access. Your data stays on your machine.
 
 ## How it works
 
-1. Parses followers/following from your Instagram HTML export
-2. Computes the "not following back" diff
+1. Parses followers/following from your Instagram HTML export (or a plain text list)
+2. Computes all relationship diffs (not following back, fans, mutuals)
 3. Opens each profile in a headless Chromium browser (via Playwright)
 4. Checks the page title to determine: **exists**, **deleted**, **private**, or **rate-limited**
-5. Generates clickable HTML reports with click-tracking
+5. Generates clickable HTML reports with click-tracking and a summary dashboard
 
 ## Setup
 
@@ -68,17 +76,44 @@ You need the official data export from Instagram. Here's how:
 
 > **Official help page:** [help.instagram.com/181231772500920](https://help.instagram.com/181231772500920)
 
-### 2. Turn on a VPN
+### 2. (Recommended) Turn on a VPN
 
-Instagram blocks Tor and rate-limits aggressively. Use any VPN (ProtonVPN Free works fine). This hides your real IP.
+Using a VPN is **strongly recommended** to protect your IP address. Instagram may rate-limit IPs that make too many requests. A VPN means only the VPN's IP gets throttled, not yours.
+
+**Free VPN options:**
+
+| VPN | Data limit | Link |
+|-----|-----------|------|
+| **ProtonVPN Free** | Unlimited | [protonvpn.com/free-vpn](https://protonvpn.com/free-vpn) |
+| **Windscribe Free** | 10 GB/month | [windscribe.com](https://windscribe.com) |
+| **Cloudflare WARP (1.1.1.1)** | Unlimited | [1.1.1.1](https://one.one.one.one) |
+
+ProtonVPN Free is the best option — unlimited data, no-logs policy, and easy to switch servers when rate-limited. Just install the app, connect, and run the script.
+
+> **Note:** Tor does NOT work. Instagram blocks all Tor exit nodes.
 
 ### 3. Run
 
 ```bash
+# Full analysis from Instagram export (analyze + check accounts)
 python3 ig_unfollow_checker.py your-export.zip
+
+# Just analyze (no browser checks — instant, no VPN needed)
+python3 ig_unfollow_checker.py your-export.zip --analyze-only
+
+# Check a custom list of usernames
+python3 ig_unfollow_checker.py --check-list usernames.txt
 ```
 
-### 4. If rate-limited (login wall), switch VPN server and resume
+The `--check-list` file can contain usernames in any format:
+```
+someuser
+@anotheruser
+https://www.instagram.com/thirduser/
+# comments are ignored
+```
+
+### 4. If rate-limited, switch VPN server and resume
 
 ```bash
 python3 ig_unfollow_checker.py your-export.zip --start-at 500
@@ -88,16 +123,24 @@ python3 ig_unfollow_checker.py your-export.zip --start-at 500
 
 | File | Description |
 |------|-------------|
-| `active_not_following_back.html` | Real accounts not following you back (with click tracking) |
-| `deleted_accounts.html` | Deleted/deactivated ghost accounts |
-| `inconclusive_accounts.html` | Couldn't determine (rate-limited) |
-| `results.json` | Raw data for all checks |
-| `usernames.txt` | Plain list of "not following back" usernames |
+| `dashboard.html` | Summary overview with stats and links to all reports |
+| `not_following_back.html` | Accounts you follow that don't follow you (click-tracked) |
+| `fans_you_dont_follow.html` | Accounts that follow you but you don't follow back (click-tracked) |
+| `mutuals.html` | Accounts you follow each other |
+| `active_not_following_back.html` | Verified existing accounts not following you back |
+| `deleted_accounts.html` | Confirmed deleted/deactivated ghost accounts |
+| `inconclusive_accounts.html` | Couldn't determine status (rate-limited) |
+| `results.json` | Raw data for all browser checks |
+| `.txt` files | Plain text versions of each list |
+
+Additional HTML files are generated for any pending requests, recent unfollows, or received follow requests found in your export.
 
 ## Options
 
 ```
---start-at N       Resume from position N (after rate limit)
+--analyze-only     Just analyze the zip (no browser checks, no VPN needed)
+--check-list FILE  Check a plain text file of usernames instead of a zip
+--start-at N       Resume browser checks from position N (after rate limit)
 --output-dir DIR   Save output files to DIR
 --show-browser     Show the browser window (for debugging)
 ```
@@ -116,17 +159,35 @@ pytest tests/ --run-smoke        # + smoke tests (hits real Instagram)
 - **3-minute pause** every 60 checks
 - **Auto-stops** after 3 consecutive login walls
 - Results save after every check — nothing lost on interruption
+- If rate-limited: switch VPN servers and resume with `--start-at`
 
 ## FAQ
 
 **Why not just use an app?**
-Every Instagram follower-checker app requires your IG login. Many are sketchy. This tool uses no login at all.
+Every Instagram follower-checker app requires your IG login. Many are sketchy and have been caught harvesting credentials. This tool uses no login at all.
 
 **Why Playwright instead of HTTP requests?**
 Instagram serves identical HTML shells for all profiles and renders content via JavaScript. Raw HTTP requests can't distinguish real from deleted accounts. Playwright runs the actual browser JavaScript.
 
 **Why VPN instead of Tor?**
-Instagram blocks all Tor exit nodes. VPN IPs are treated as normal users.
+Instagram blocks all Tor exit nodes. VPN IPs are treated as normal residential users.
 
 **Can I get banned?**
 You're not logged in, not using your real IP, and the tool is conservative with rate limiting. The worst that happens is the VPN IP gets temporarily blocked (login wall) — just switch servers.
+
+**How long does it take?**
+`--analyze-only` is instant. Browser checks take ~4-9 seconds per account. 1,000 accounts = roughly 2-3 hours with batch pauses.
+
+## Disclaimer
+
+**This tool is provided as-is, for personal and educational use only.** By using this software, you acknowledge and agree that:
+
+- **Use at your own risk.** The author(s) are **not responsible** for any account restrictions, rate limiting, shadowbans, temporary blocks, or any other actions taken by Instagram/Meta against your account or IP address as a result of using this tool.
+- This tool interacts with Instagram's public-facing web pages in a way that may violate Instagram's [Terms of Use](https://help.instagram.com/581066165581870) or [Community Guidelines](https://help.instagram.com/477434105621119). You are solely responsible for ensuring your use complies with applicable terms and laws.
+- **No warranty** is provided, express or implied. The software is provided "as is" without warranty of any kind.
+- The author(s) make **no guarantees** about the accuracy of results. Instagram's web interface changes frequently and may break detection at any time.
+- **If you want to be extra safe:** always use a VPN (see [free options above](#2-recommended-turn-on-a-vpn)), use `--analyze-only` for zero risk, and keep delays conservative.
+
+## License
+
+MIT

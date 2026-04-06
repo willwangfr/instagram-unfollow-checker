@@ -23,8 +23,11 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from ig_unfollow_checker import (
     extract_usernames_from_zip,
+    extract_extra_lists_from_zip,
+    load_usernames_from_file,
     check_account,
     generate_html,
+    generate_summary_html,
 )
 
 
@@ -329,6 +332,143 @@ class TestGenerateHtml:
         content = Path(outfile).read_text()
         assert "Accounts — 3" in content
         assert "<title>Accounts (3)</title>" in content
+
+
+# ---------------------------------------------------------------------------
+# Unit Tests — load_usernames_from_file
+# ---------------------------------------------------------------------------
+
+
+class TestLoadUsernamesFromFile:
+    def test_plain_usernames(self, tmp_path):
+        f = tmp_path / "users.txt"
+        f.write_text("alice\nbob\ncharlie\n")
+        result = load_usernames_from_file(str(f))
+        assert result == ["alice", "bob", "charlie"]
+
+    def test_with_at_signs(self, tmp_path):
+        f = tmp_path / "users.txt"
+        f.write_text("@alice\n@bob\n")
+        result = load_usernames_from_file(str(f))
+        assert result == ["alice", "bob"]
+
+    def test_with_full_urls(self, tmp_path):
+        f = tmp_path / "users.txt"
+        f.write_text("https://www.instagram.com/alice/\nhttps://instagram.com/_u/bob\n")
+        result = load_usernames_from_file(str(f))
+        assert result == ["alice", "bob"]
+
+    def test_comments_and_blank_lines(self, tmp_path):
+        f = tmp_path / "users.txt"
+        f.write_text("# this is a comment\nalice\n\n  \n# another comment\nbob\n")
+        result = load_usernames_from_file(str(f))
+        assert result == ["alice", "bob"]
+
+    def test_mixed_formats(self, tmp_path):
+        f = tmp_path / "users.txt"
+        f.write_text("alice\n@bob\nhttps://www.instagram.com/charlie/\n# skip\ndave\n")
+        result = load_usernames_from_file(str(f))
+        assert result == ["alice", "bob", "charlie", "dave"]
+
+    def test_empty_file(self, tmp_path):
+        f = tmp_path / "empty.txt"
+        f.write_text("")
+        result = load_usernames_from_file(str(f))
+        assert result == []
+
+
+# ---------------------------------------------------------------------------
+# Unit Tests — extract_extra_lists_from_zip
+# ---------------------------------------------------------------------------
+
+
+class TestExtractExtraLists:
+    def test_with_recently_unfollowed(self, tmp_path):
+        zip_path = tmp_path / "test.zip"
+        unfollowed_html = '<html><body><a href="https://www.instagram.com/old_friend">old_friend</a></body></html>'
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            zf.writestr("connections/followers_and_following/following.html", "<html></html>")
+            zf.writestr("connections/followers_and_following/followers_1.html", "<html></html>")
+            zf.writestr("connections/followers_and_following/recently_unfollowed_profiles.html", unfollowed_html)
+
+        extras = extract_extra_lists_from_zip(str(zip_path))
+        assert "Recently Unfollowed by You" in extras
+        assert "old_friend" in extras["Recently Unfollowed by You"]
+
+    def test_empty_extras(self, make_ig_zip):
+        zp = make_ig_zip(["alice"], ["bob"])
+        extras = extract_extra_lists_from_zip(str(zp))
+        assert isinstance(extras, dict)
+
+
+# ---------------------------------------------------------------------------
+# Unit Tests — generate_summary_html
+# ---------------------------------------------------------------------------
+
+
+class TestGenerateSummaryHtml:
+    def test_basic_dashboard(self, tmp_path):
+        outfile = str(tmp_path / "dashboard.html")
+        stats = {"Following": 100, "Followers": 200, "Mutuals": 80}
+        lists = {"Recently Unfollowed by You": ["alice", "bob"]}
+        generate_summary_html(stats, lists, outfile)
+
+        content = Path(outfile).read_text()
+        assert "100" in content
+        assert "200" in content
+        assert "80" in content
+        assert "alice" in content
+        assert "Recently Unfollowed" in content
+
+    def test_empty_dashboard(self, tmp_path):
+        outfile = str(tmp_path / "dashboard.html")
+        generate_summary_html({}, {}, outfile)
+        assert Path(outfile).exists()
+
+
+# ---------------------------------------------------------------------------
+# Unit Tests — relationship diffs
+# ---------------------------------------------------------------------------
+
+
+class TestRelationshipDiffs:
+    def test_fans_list(self, make_ig_zip):
+        following = ["alice", "bob"]
+        followers = ["alice", "charlie", "dave"]
+        zp = make_ig_zip(following, followers)
+
+        got_following, got_followers = extract_usernames_from_zip(str(zp))
+        fans = got_followers - got_following
+
+        assert fans == {"charlie", "dave"}
+
+    def test_mutuals_list(self, make_ig_zip):
+        following = ["alice", "bob", "charlie"]
+        followers = ["alice", "charlie", "dave"]
+        zp = make_ig_zip(following, followers)
+
+        got_following, got_followers = extract_usernames_from_zip(str(zp))
+        mutuals = got_following & got_followers
+
+        assert mutuals == {"alice", "charlie"}
+
+    def test_all_diffs_consistent(self, make_ig_zip):
+        following = ["a", "b", "c", "d"]
+        followers = ["c", "d", "e", "f"]
+        zp = make_ig_zip(following, followers)
+
+        got_following, got_followers = extract_usernames_from_zip(str(zp))
+        not_following_back = got_following - got_followers
+        fans = got_followers - got_following
+        mutuals = got_following & got_followers
+
+        assert not_following_back == {"a", "b"}
+        assert fans == {"e", "f"}
+        assert mutuals == {"c", "d"}
+        # No overlaps
+        assert not (not_following_back & fans)
+        assert not (not_following_back & mutuals)
+        assert not (fans & mutuals)
 
 
 # ---------------------------------------------------------------------------
