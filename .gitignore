@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Results (personal data)
+results*.json
+usernames*.txt
+usernames*.html
+*_not_following_back.html
+deleted_accounts.html
+inconclusive_accounts.html
+check_*.txt
+check_*.log
+
+# Instagram exports
+instagram-*.zip
+instagram-*/
+extract-*/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# pytest
+.pytest_cache/
+
+# Virtual env
+.venv/
+venv/
