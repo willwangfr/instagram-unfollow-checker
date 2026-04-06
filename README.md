@@ -119,6 +119,25 @@ https://www.instagram.com/thirduser/
 python3 ig_unfollow_checker.py your-export.zip --start-at 500
 ```
 
+### 5. (Power Users) Compare exports over time — detect unfollows and possible blocks
+
+If you save your Instagram exports periodically, you can compare them to see exactly who unfollowed you, who you gained, and who might have **blocked** you.
+
+```bash
+python3 ig_unfollow_checker.py --diff old-export.zip new-export.zip
+```
+
+This generates:
+- **Lost followers** — people who were following you before but aren't now
+- **New followers** — people who started following you
+- **You unfollowed** — accounts you stopped following
+- **You started following** — new accounts you followed
+- **Possible blocks** — accounts that were **mutual** (you followed each other) but now they don't follow you anymore. This is the strongest signal of a block, since mutuals rarely just unfollow.
+
+It then optionally checks each "lost follower" with the browser to determine if they deleted their account or are still active (and therefore either unfollowed or blocked you).
+
+> **Tip:** Export your data monthly and keep the zips. Name them by date (Instagram does this automatically). The more snapshots you have, the more useful this feature becomes.
+
 ## Output files
 
 | File | Description |
@@ -138,11 +157,12 @@ Additional HTML files are generated for any pending requests, recent unfollows, 
 ## Options
 
 ```
---analyze-only     Just analyze the zip (no browser checks, no VPN needed)
---check-list FILE  Check a plain text file of usernames instead of a zip
---start-at N       Resume browser checks from position N (after rate limit)
---output-dir DIR   Save output files to DIR
---show-browser     Show the browser window (for debugging)
+--analyze-only          Just analyze the zip (no browser checks, no VPN needed)
+--check-list FILE       Check a plain text file of usernames instead of a zip
+--diff OLD_ZIP NEW_ZIP  Compare two exports to detect unfollows/blocks
+--start-at N            Resume browser checks from position N (after rate limit)
+--output-dir DIR        Save output files to DIR
+--show-browser          Show the browser window (for debugging)
 ```
 
 ## Tests

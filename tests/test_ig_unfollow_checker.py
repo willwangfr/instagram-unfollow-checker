@@ -25,6 +25,7 @@ from ig_unfollow_checker import (
     extract_usernames_from_zip,
     extract_extra_lists_from_zip,
     load_usernames_from_file,
+    diff_exports,
     check_account,
     generate_html,
     generate_summary_html,
@@ -537,6 +538,78 @@ class TestEndToEnd:
         assert len(not_found) == 1
         assert exists[0]["username"] == "alice"
         assert not_found[0]["username"] == "bob"
+
+
+# ---------------------------------------------------------------------------
+# Unit Tests — diff_exports
+# ---------------------------------------------------------------------------
+
+
+class TestDiffExports:
+    def _make_zip(self, tmp_path, name, following, followers):
+        """Helper to create a zip with given following/followers."""
+        following_html = "<html><body>\n" + "\n".join(
+            f'<a href="https://www.instagram.com/_u/{u}">{u}</a>' for u in following
+        ) + "\n</body></html>"
+        followers_html = "<html><body>\n" + "\n".join(
+            f'<a href="https://www.instagram.com/{u}">{u}</a>' for u in followers
+        ) + "\n</body></html>"
+
+        zip_path = tmp_path / name
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            zf.writestr("connections/followers_and_following/following.html", following_html)
+            zf.writestr("connections/followers_and_following/followers_1.html", followers_html)
+        return zip_path
+
+    def test_lost_followers(self, tmp_path):
+        old = self._make_zip(tmp_path, "old.zip", ["a"], ["a", "b", "c"])
+        new = self._make_zip(tmp_path, "new.zip", ["a"], ["a", "c"])
+        changes, counts = diff_exports(str(old), str(new))
+        lost = changes["Lost Followers (unfollowed you or blocked you)"]
+        assert "b" in lost
+        assert "a" not in lost
+
+    def test_new_followers(self, tmp_path):
+        old = self._make_zip(tmp_path, "old.zip", [], ["a"])
+        new = self._make_zip(tmp_path, "new.zip", [], ["a", "b", "c"])
+        changes, _ = diff_exports(str(old), str(new))
+        assert sorted(changes["New Followers"]) == ["b", "c"]
+
+    def test_you_unfollowed(self, tmp_path):
+        old = self._make_zip(tmp_path, "old.zip", ["a", "b", "c"], [])
+        new = self._make_zip(tmp_path, "new.zip", ["a"], [])
+        changes, _ = diff_exports(str(old), str(new))
+        assert sorted(changes["You Unfollowed"]) == ["b", "c"]
+
+    def test_you_started_following(self, tmp_path):
+        old = self._make_zip(tmp_path, "old.zip", ["a"], [])
+        new = self._make_zip(tmp_path, "new.zip", ["a", "b"], [])
+        changes, _ = diff_exports(str(old), str(new))
+        assert changes["You Started Following"] == ["b"]
+
+    def test_possible_blocks(self, tmp_path):
+        """Mutual who disappears from followers = possible block."""
+        old = self._make_zip(tmp_path, "old.zip", ["a", "b", "c"], ["a", "b", "c"])
+        new = self._make_zip(tmp_path, "new.zip", ["a", "b", "c"], ["a", "c"])
+        changes, _ = diff_exports(str(old), str(new))
+        blocks = changes["Possible Blocks (were mutual, now they don't follow you)"]
+        assert "b" in blocks
+
+    def test_no_changes(self, tmp_path):
+        old = self._make_zip(tmp_path, "old.zip", ["a", "b"], ["a", "b"])
+        new = self._make_zip(tmp_path, "new.zip", ["a", "b"], ["a", "b"])
+        changes, counts = diff_exports(str(old), str(new))
+        for label, users in changes.items():
+            assert users == [], f"{label} should be empty but got {users}"
+
+    def test_counts(self, tmp_path):
+        old = self._make_zip(tmp_path, "old.zip", ["a", "b"], ["x", "y", "z"])
+        new = self._make_zip(tmp_path, "new.zip", ["a", "b", "c"], ["x", "y"])
+        _, counts = diff_exports(str(old), str(new))
+        assert counts["old_following"] == 2
+        assert counts["old_followers"] == 3
+        assert counts["new_following"] == 3
+        assert counts["new_followers"] == 2
 
 
 # ---------------------------------------------------------------------------

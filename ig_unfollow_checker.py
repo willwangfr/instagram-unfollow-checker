@@ -10,6 +10,11 @@ Modes:
 
   2. LIST MODE:  Give it a text file of usernames and it checks if they exist
 
+  3. DIFF MODE:  Compare two exports over time to find:
+     - Who unfollowed you (possible blocks)
+     - New followers
+     - Who you started/stopped following
+
 Requirements:
   pip install playwright
   python -m playwright install chromium
@@ -26,6 +31,9 @@ Usage:
 
   # Resume after rate limit
   python3 ig_unfollow_checker.py export.zip --start-at 500
+
+  # Compare two exports to find who unfollowed you (possible blocks)
+  python3 ig_unfollow_checker.py --diff old-export.zip new-export.zip
 """
 
 import re
@@ -227,6 +235,33 @@ def run_checks(usernames: list[str], start_at: int, results_path: Path, show_bro
 
 
 # ---------------------------------------------------------------------------
+# Diff mode — compare two exports
+# ---------------------------------------------------------------------------
+
+def diff_exports(old_zip: str, new_zip: str) -> dict[str, list[str]]:
+    """Compare two IG exports and return changes."""
+    old_following, old_followers = extract_usernames_from_zip(old_zip)
+    new_following, new_followers = extract_usernames_from_zip(new_zip)
+
+    return {
+        "Lost Followers (unfollowed you or blocked you)": sorted(old_followers - new_followers),
+        "New Followers": sorted(new_followers - old_followers),
+        "You Unfollowed": sorted(old_following - new_following),
+        "You Started Following": sorted(new_following - old_following),
+        # Accounts that were following you AND you were following them, but now
+        # they disappeared from your followers — strong block signal
+        "Possible Blocks (were mutual, now they don't follow you)": sorted(
+            (old_followers & old_following) - new_followers - (new_following - old_following)
+        ),
+    }, {
+        "old_following": len(old_following),
+        "old_followers": len(old_followers),
+        "new_following": len(new_following),
+        "new_followers": len(new_followers),
+    }
+
+
+# ---------------------------------------------------------------------------
 # HTML generation
 # ---------------------------------------------------------------------------
 
@@ -357,18 +392,89 @@ def main():
     )
     parser.add_argument("zipfile", nargs="?", help="Path to Instagram data export zip")
     parser.add_argument("--check-list", help="Check a plain text file of usernames (one per line)")
+    parser.add_argument("--diff", nargs=2, metavar=("OLD_ZIP", "NEW_ZIP"), help="Compare two exports to find who unfollowed/blocked you")
     parser.add_argument("--analyze-only", action="store_true", help="Only analyze the zip, skip browser checks")
     parser.add_argument("--start-at", type=int, default=0, help="Resume from position N")
     parser.add_argument("--output-dir", default=".", help="Output directory")
     parser.add_argument("--show-browser", action="store_true")
     args = parser.parse_args()
 
-    if not args.zipfile and not args.check_list:
-        parser.error("Provide an Instagram export zip or --check-list <file>")
+    if not args.zipfile and not args.check_list and not args.diff:
+        parser.error("Provide an Instagram export zip, --check-list <file>, or --diff <old> <new>")
 
     out = Path(args.output_dir)
     out.mkdir(exist_ok=True)
     results_path = out / "results.json"
+
+    # =======================================================================
+    # MODE 0: Diff two exports
+    # =======================================================================
+    if args.diff:
+        old_zip, new_zip = args.diff
+        for zp in [old_zip, new_zip]:
+            if not Path(zp).exists():
+                print(f"Error: {zp} not found.")
+                sys.exit(1)
+
+        print(f"Comparing exports...")
+        print(f"  Old: {Path(old_zip).name}")
+        print(f"  New: {Path(new_zip).name}")
+
+        changes, counts = diff_exports(old_zip, new_zip)
+
+        print(f"\n  Old: {counts['old_following']} following, {counts['old_followers']} followers")
+        print(f"  New: {counts['new_following']} following, {counts['new_followers']} followers")
+        print(f"  Net followers: {counts['new_followers'] - counts['old_followers']:+d}")
+        print(f"  Net following: {counts['new_following'] - counts['old_following']:+d}")
+
+        for label, users in changes.items():
+            print(f"\n  {label}: {len(users)}")
+            color_map = {
+                "Lost Followers": "#ff5252",
+                "New Followers": "#66bb6a",
+                "You Unfollowed": "#ff9800",
+                "You Started Following": "#4fc3f7",
+                "Possible Blocks": "#ff1744",
+            }
+            color = "#4fc3f7"
+            for key, c in color_map.items():
+                if key in label:
+                    color = c
+                    break
+            safe_name = re.sub(r'[^a-z0-9]+', '_', label.lower()).strip('_') + ".html"
+            track = "Possible Blocks" in label or "Lost Followers" in label
+            generate_html(users, label, f"Between {Path(old_zip).stem} and {Path(new_zip).stem}",
+                          color, str(out / safe_name), track_clicks=track)
+            (out / safe_name.replace('.html', '.txt')).write_text("\n".join(users) + "\n")
+
+        # Optionally check if "lost followers" accounts still exist
+        lost = changes.get("Lost Followers (unfollowed you or blocked you)", [])
+        possible_blocks = changes.get("Possible Blocks (were mutual, now they don't follow you)", [])
+        check_candidates = sorted(set(lost + possible_blocks))
+
+        if check_candidates and not args.analyze_only:
+            print(f"\n  Checking {len(check_candidates)} lost/possibly-blocked accounts...")
+            all_results, stopped_early = run_checks(check_candidates, args.start_at, results_path, args.show_browser)
+
+            exists = sorted([r['username'] for r in all_results if r['status'] in ('EXISTS', 'EXISTS_PRIVATE')])
+            not_found = sorted([r['username'] for r in all_results if r['status'] == 'NOT_FOUND'])
+
+            generate_html(exists,
+                          "Lost Followers — Account Still Active",
+                          "They unfollowed you (or blocked you). Account exists.",
+                          "#ff5252", str(out / "lost_followers_active.html"), track_clicks=True)
+            generate_html(not_found,
+                          "Lost Followers — Account Deleted",
+                          "They deactivated or deleted their account.",
+                          "#888", str(out / "lost_followers_deleted.html"))
+
+            print(f"\n  Still active (unfollowed or blocked you): {len(exists)}")
+            print(f"  Account deleted/deactivated: {len(not_found)}")
+            if stopped_early:
+                print(f"\n  Resume: python3 ig_unfollow_checker.py --diff {old_zip} {new_zip} --start-at {len(all_results)}")
+
+        print("\nDONE")
+        return
 
     # =======================================================================
     # MODE 1: Check a plain list of usernames
