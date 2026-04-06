@@ -1,12 +1,12 @@
 # ig-unfollow-checker
 
-Analyze your Instagram following/followers and find out which accounts are **deleted, deactivated, or ghost profiles** — without logging into any third-party app.
+Analyze your Instagram following/followers and find out which accounts are **deleted, deactivated, or ghost profiles** — without logging into any sketchy third-party app.
 
 **What it does:**
 - **Not following you back** — who you follow that doesn't follow you
 - **Fans** — who follows you that you don't follow back
 - **Mutuals** — accounts you follow each other
-- **Ghost detector** — checks each profile with a real browser to see if it still exists
+- **Ghost detector (!!!) ** — checks each profile with a real browser to see if it still exists
 - **Pending requests, recent unfollows** — everything in your export
 - **Bulk username checker** — give it any list of usernames to check if they still exist
 
