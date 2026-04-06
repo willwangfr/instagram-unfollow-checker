@@ -21,9 +21,52 @@ python -m playwright install chromium
 
 ## Usage
 
-### 1. Download your Instagram data
+### 1. Download your Instagram data (HTML format)
 
-Instagram → Settings → Your Activity → Download Your Information → **HTML format**
+You need the official data export from Instagram. Here's how:
+
+<details>
+<summary><b>On iPhone / Android</b> (click to expand)</summary>
+
+1. Open Instagram and tap your **profile picture** (bottom right)
+2. Tap the **hamburger menu** (three lines, top right)
+3. Tap **Accounts Center** (under "Meta" at the top)
+4. Tap **Your information and permissions**
+5. Tap **Download your information**
+6. Tap **Download or transfer information**
+7. Select your Instagram account, tap **Next**
+8. Choose **Some of your information**
+9. Scroll down and check only **Followers and following** (under "Connections")
+10. Tap **Next**
+11. Choose **Download to device**
+12. Set format to **HTML** and quality to **Low** (we only need text data)
+13. Tap **Create files**
+14. Wait for Instagram's email (usually 5-30 minutes, can take up to 48 hours for large accounts)
+15. Open the email, tap the link, download the `.zip` file
+
+</details>
+
+<details>
+<summary><b>On Desktop / Web Browser</b> (click to expand)</summary>
+
+1. Go to [instagram.com](https://www.instagram.com) and log in
+2. Click **More** (bottom left sidebar) → **Your Activity**
+3. Click **Download your information**
+4. Click **Request a download**
+5. Select your Instagram account
+6. Choose **Some of your information**
+7. Check only **Followers and following**
+8. Click **Next**
+9. Set format to **HTML**, date range to **All time**
+10. Click **Submit request**
+11. Wait for the email from Instagram
+12. Click the link in the email to download the `.zip` file
+
+</details>
+
+> **Tip:** Only select "Followers and following" — you don't need posts, messages, etc. This makes the export much smaller and faster.
+
+> **Official help page:** [help.instagram.com/181231772500920](https://help.instagram.com/181231772500920)
 
 ### 2. Turn on a VPN
 
