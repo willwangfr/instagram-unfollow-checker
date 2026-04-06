@@ -6,14 +6,12 @@ __pycache__/
 dist/
 build/
 
-# Results (personal data)
+# Generated output (personal data — no source HTML files exist in this project)
 results*.json
-usernames*.txt
-usernames*.html
-*_not_following_back.html
-deleted_accounts.html
-inconclusive_accounts.html
-check_*.txt
+*.html
+!README.md
+*.txt
+!requirements*.txt
 check_*.log
 
 # Instagram exports

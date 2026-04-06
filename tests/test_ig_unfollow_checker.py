@@ -50,11 +50,11 @@ FOLLOWERS_HTML_TEMPLATE = """
 
 
 def _make_following_link(username):
-    return f'<a href="https://www.instagram.com/_u/{username}" target="_blank">{username}</a>'
+    return f'<a href="https://www.instagram.com/_u/{username}">{username}</a>'
 
 
 def _make_follower_link(username):
-    return f'<a href="https://www.instagram.com/{username}" target="_blank">{username}</a>'
+    return f'<a href="https://www.instagram.com/{username}">{username}</a>'
 
 
 @pytest.fixture
@@ -215,15 +215,14 @@ class TestCheckAccount:
         assert result["status"] == "LOGIN_WALL"
 
     def test_private_account(self, mock_page):
-        mock_page.title.return_value = "Private User (@private_user) • Instagram"
+        mock_page.title.return_value = "Instagram"  # private accounts don't show name in title
         mock_page.url = "https://www.instagram.com/private_user/"
-        # Title doesn't match the exact pattern, so falls through to body check
         locator = MagicMock()
         locator.inner_text.return_value = "This Account is Private\nFollow to see their photos"
         mock_page.locator.return_value = locator
 
         result = check_account(mock_page, "private_user")
-        assert result["status"] in ("EXISTS", "EXISTS_PRIVATE")
+        assert result["status"] == "EXISTS_PRIVATE"
 
     def test_network_error(self, mock_page):
         mock_page.goto.side_effect = Exception("net::ERR_CONNECTION_TIMED_OUT")
@@ -377,6 +376,18 @@ class TestLoadUsernamesFromFile:
         result = load_usernames_from_file(str(f))
         assert result == []
 
+    def test_rejects_xss_payload(self, tmp_path):
+        f = tmp_path / "xss.txt"
+        f.write_text('"><script>alert(1)</script><a x="\nalice\n')
+        result = load_usernames_from_file(str(f))
+        assert result == ["alice"]
+
+    def test_rejects_invalid_characters(self, tmp_path):
+        f = tmp_path / "bad.txt"
+        f.write_text("valid_user\ninvalid user\nhas@symbol\nalso-dashes\ngood.name\n")
+        result = load_usernames_from_file(str(f))
+        assert result == ["valid_user", "good.name"]
+
 
 # ---------------------------------------------------------------------------
 # Unit Tests — extract_extra_lists_from_zip
@@ -386,7 +397,7 @@ class TestLoadUsernamesFromFile:
 class TestExtractExtraLists:
     def test_with_recently_unfollowed(self, tmp_path):
         zip_path = tmp_path / "test.zip"
-        unfollowed_html = '<html><body><a href="https://www.instagram.com/old_friend">old_friend</a></body></html>'
+        unfollowed_html = '<html><body><a href="https://www.instagram.com/old_friend" target="_blank">old_friend</a></body></html>'
         with zipfile.ZipFile(zip_path, "w") as zf:
             zf.writestr("connections/followers_and_following/following.html", "<html></html>")
             zf.writestr("connections/followers_and_following/followers_1.html", "<html></html>")
@@ -549,10 +560,10 @@ class TestDiffExports:
     def _make_zip(self, tmp_path, name, following, followers):
         """Helper to create a zip with given following/followers."""
         following_html = "<html><body>\n" + "\n".join(
-            f'<a href="https://www.instagram.com/_u/{u}">{u}</a>' for u in following
+            f'<a href="https://www.instagram.com/_u/{u}" target="_blank">{u}</a>' for u in following
         ) + "\n</body></html>"
         followers_html = "<html><body>\n" + "\n".join(
-            f'<a href="https://www.instagram.com/{u}">{u}</a>' for u in followers
+            f'<a href="https://www.instagram.com/{u}" target="_blank">{u}</a>' for u in followers
         ) + "\n</body></html>"
 
         zip_path = tmp_path / name

@@ -40,12 +40,16 @@ import re
 import sys
 import time
 import json
+import html as html_mod
 import random
 import argparse
 import zipfile
 from pathlib import Path
 from datetime import datetime
 from playwright.sync_api import sync_playwright
+
+# Valid Instagram username pattern
+USERNAME_RE = re.compile(r'^[a-zA-Z0-9_.]{1,30}$')
 
 
 # --- Config ---
@@ -79,13 +83,13 @@ def extract_usernames_from_zip(zip_path: str) -> tuple[set, set]:
         with z.open(followers_file) as f:
             followers_html = f.read().decode('utf-8')
 
-    # Following uses /_u/username, followers uses /username
-    following = set(re.findall(r'instagram\.com/_u/([a-zA-Z0-9_.]+)', following_html))
-    followers = set(re.findall(r'instagram\.com/([a-zA-Z0-9_.]+)', followers_html))
+    # Following uses /_u/username, followers uses /username — anchor to href= context
+    following = set(re.findall(r'href="https://www\.instagram\.com/_u/([a-zA-Z0-9_.]+)"', following_html))
+    followers = set(re.findall(r'href="https://www\.instagram\.com/([a-zA-Z0-9_.]+)"', followers_html))
 
     # If the /_u/ pattern doesn't match, try the direct pattern for following too
     if not following:
-        following = set(re.findall(r'instagram\.com/([a-zA-Z0-9_.]+)', following_html))
+        following = set(re.findall(r'href="https://www\.instagram\.com/([a-zA-Z0-9_.]+)"', following_html))
 
     return following, followers
 
@@ -108,10 +112,10 @@ def extract_extra_lists_from_zip(zip_path: str) -> dict[str, list[str]]:
             if match:
                 with z.open(match) as f:
                     html = f.read().decode('utf-8')
-                # Try both URL formats
-                users = re.findall(r'instagram\.com/_u/([a-zA-Z0-9_.]+)', html)
+                # Try both URL formats — anchored to href context
+                users = re.findall(r'href="https://www\.instagram\.com/_u/([a-zA-Z0-9_.]+)"', html)
                 if not users:
-                    users = re.findall(r'instagram\.com/([a-zA-Z0-9_.]+)', html)
+                    users = re.findall(r'href="https://www\.instagram\.com/([a-zA-Z0-9_.]+)"', html)
                 if users:
                     extras[label] = sorted(set(users))
 
@@ -122,12 +126,23 @@ def load_usernames_from_file(filepath: str) -> list[str]:
     """Load usernames from a plain text file (one per line)."""
     content = Path(filepath).read_text()
     usernames = []
+    skipped = []
     for line in content.splitlines():
         line = line.strip().lstrip("@")
         # Strip full URLs down to username
         line = re.sub(r'https?://(?:www\.)?instagram\.com/(?:_u/)?', '', line).rstrip('/')
-        if line and not line.startswith("#"):
-            usernames.append(line)
+        if not line or line.startswith("#"):
+            continue
+        if not USERNAME_RE.match(line):
+            skipped.append(line)
+            continue
+        usernames.append(line)
+    if skipped:
+        print(f"  Skipped {len(skipped)} invalid usernames (not matching Instagram format):")
+        for s in skipped[:5]:
+            print(f"    {s!r}")
+        if len(skipped) > 5:
+            print(f"    ... and {len(skipped) - 5} more")
     return usernames
 
 
@@ -238,7 +253,7 @@ def run_checks(usernames: list[str], start_at: int, results_path: Path, show_bro
 # Diff mode — compare two exports
 # ---------------------------------------------------------------------------
 
-def diff_exports(old_zip: str, new_zip: str) -> dict[str, list[str]]:
+def diff_exports(old_zip: str, new_zip: str) -> tuple[dict[str, list[str]], dict[str, int]]:
     """Compare two IG exports and return changes."""
     old_following, old_followers = extract_usernames_from_zip(old_zip)
     new_following, new_followers = extract_usernames_from_zip(new_zip)
@@ -251,7 +266,7 @@ def diff_exports(old_zip: str, new_zip: str) -> dict[str, list[str]]:
         # Accounts that were following you AND you were following them, but now
         # they disappeared from your followers — strong block signal
         "Possible Blocks (were mutual, now they don't follow you)": sorted(
-            (old_followers & old_following) - new_followers - (new_following - old_following)
+            (old_followers & old_following) - new_followers
         ),
     }, {
         "old_following": len(old_following),
@@ -267,7 +282,9 @@ def diff_exports(old_zip: str, new_zip: str) -> dict[str, list[str]]:
 
 def generate_html(accounts: list[str], title: str, subtitle: str, color: str, filename: str, track_clicks: bool = False):
     """Generate a clickable HTML file."""
-    html = f'''<html><head><title>{title} ({len(accounts)})</title>
+    esc_title = html_mod.escape(title)
+    esc_subtitle = html_mod.escape(subtitle)
+    html = f'''<html><head><title>{esc_title} ({len(accounts)})</title>
 <style>
 body{{font-family:monospace;font-size:14px;padding:20px;background:#111;color:#eee}}
 a{{color:{color};text-decoration:none}}
@@ -283,13 +300,14 @@ h2{{color:#4fc3f7}}
     if track_clicks:
         html += f'<div class="stats">Clicked: <span id="clicked-count">0</span> / {len(accounts)}</div>\n'
 
-    html += f'<h2>{title} — {len(accounts)}</h2>\n'
-    html += f'<p class="note">{subtitle}</p>\n<ol>\n'
+    html += f'<h2>{esc_title} — {len(accounts)}</h2>\n'
+    html += f'<p class="note">{esc_subtitle}</p>\n<ol>\n'
 
     for u in accounts:
-        onclick = f' data-user="{u}" onclick="trackClick(this, event)"' if track_clicks else ''
-        count_span = f'<span class="count" id="count-{u}"></span>' if track_clicks else ''
-        html += f'<li><a href="https://www.instagram.com/{u}/" target="_blank"{onclick}>{u}</a>{count_span}</li>\n'
+        eu = html_mod.escape(u)
+        onclick = f' data-user="{eu}" onclick="trackClick(this, event)"' if track_clicks else ''
+        count_span = f'<span class="count" id="count-{eu}"></span>' if track_clicks else ''
+        html += f'<li><a href="https://www.instagram.com/{eu}/" target="_blank"{onclick}>{eu}</a>{count_span}</li>\n'
 
     html += '</ol>\n'
 
@@ -349,7 +367,7 @@ ul{padding-left:20px}li{padding:2px 0}
     # Stats grid
     html += '<div class="stat-grid">\n'
     for label, value in stats.items():
-        html += f'<div class="stat"><div class="num">{value}</div><div class="label">{label}</div></div>\n'
+        html += f'<div class="stat"><div class="num">{value}</div><div class="label">{html_mod.escape(label)}</div></div>\n'
     html += '</div>\n'
 
     # File links
@@ -367,9 +385,10 @@ ul{padding-left:20px}li{padding:2px 0}
 
     # Extra lists
     for label, users in lists.items():
-        html += f'\n<details><summary>{label} ({len(users)})</summary><ul>\n'
+        html += f'\n<details><summary>{html_mod.escape(label)} ({len(users)})</summary><ul>\n'
         for u in users[:200]:
-            html += f'<li><a href="https://www.instagram.com/{u}/" target="_blank">{u}</a></li>\n'
+            eu = html_mod.escape(u)
+            html += f'<li><a href="https://www.instagram.com/{eu}/" target="_blank">{eu}</a></li>\n'
         if len(users) > 200:
             html += f'<li>... and {len(users) - 200} more</li>\n'
         html += '</ul></details>\n'
