@@ -19,6 +19,10 @@ instagram-*.zip
 instagram-*/
 extract-*/
 
+# Reports, if someone points --output-dir back into the checkout
+ig-reports/
+ig-unfollow-checker-reports/
+
 # OS
 .DS_Store
 Thumbs.db

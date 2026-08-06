@@ -401,6 +401,26 @@ ul{padding-left:20px}li{padding:2px 0}
 # Main
 # ---------------------------------------------------------------------------
 
+REPORT_DIRNAME = "ig-reports"
+
+
+def default_output_dir(input_path: str | None) -> Path:
+    """Pick where reports go when --output-dir isn't given.
+
+    Reports name real people, so they must never be written loose next to this
+    script -- a checkout of this repo is a normal place to run it from, and a
+    stray `git add -A` there would publish them. Reports land beside the export
+    they came from, or in the home directory if that would put them inside the
+    checkout.
+    """
+    base = Path(input_path).resolve().parent if input_path else Path.cwd().resolve()
+    tool_dir = Path(__file__).resolve().parent
+
+    if base == tool_dir or tool_dir in base.parents:
+        return Path.home() / "ig-unfollow-checker-reports"
+    return base / REPORT_DIRNAME
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Instagram Unfollow Checker",
@@ -414,15 +434,23 @@ def main():
     parser.add_argument("--diff", nargs=2, metavar=("OLD_ZIP", "NEW_ZIP"), help="Compare two exports to find who unfollowed/blocked you")
     parser.add_argument("--analyze-only", action="store_true", help="Only analyze the zip, skip browser checks")
     parser.add_argument("--start-at", type=int, default=0, help="Resume from position N")
-    parser.add_argument("--output-dir", default=".", help="Output directory")
+    parser.add_argument("--output-dir", default=None,
+                        help=f"Where to write reports (default: {REPORT_DIRNAME}/ "
+                             "beside the export you point it at)")
     parser.add_argument("--show-browser", action="store_true")
     args = parser.parse_args()
 
     if not args.zipfile and not args.check_list and not args.diff:
         parser.error("Provide an Instagram export zip, --check-list <file>, or --diff <old> <new>")
 
-    out = Path(args.output_dir)
-    out.mkdir(exist_ok=True)
+    if args.output_dir:
+        out = Path(args.output_dir)
+    else:
+        source = args.zipfile or args.check_list or (args.diff[1] if args.diff else None)
+        out = default_output_dir(source)
+        print(f"Writing reports to {out}")
+        print("  (these list real usernames -- use --output-dir to put them elsewhere)\n")
+    out.mkdir(parents=True, exist_ok=True)
     results_path = out / "results.json"
 
     # =======================================================================

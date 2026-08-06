@@ -164,6 +164,8 @@ It then optionally checks each "lost follower" with the browser to determine if 
 
 ## Output files
 
+Reports go to an `ig-reports/` folder next to the export you point the tool at, and the run prints the path on startup. They list real usernames, so the default deliberately keeps them out of a clone of this repo: run the tool from inside the checkout and the reports go to `~/ig-unfollow-checker-reports/` instead, where a stray `git add -A` can't pick them up. Pass `--output-dir DIR` to put them anywhere you like.
+
 | File | Description |
 |------|-------------|
 | `dashboard.html` | Summary overview with stats and links to all reports |
@@ -185,7 +187,7 @@ Additional HTML files are generated for any pending requests, recent unfollows, 
 --check-list FILE       Check a plain text file of usernames instead of a zip
 --diff OLD_ZIP NEW_ZIP  Compare two exports to detect unfollows/blocks
 --start-at N            Resume browser checks from position N (after rate limit)
---output-dir DIR        Save output files to DIR
+--output-dir DIR        Save reports to DIR (default: ig-reports/ beside your export)
 --show-browser          Show the browser window (for debugging)
 ```
 
