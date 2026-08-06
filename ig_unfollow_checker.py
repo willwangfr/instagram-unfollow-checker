@@ -284,7 +284,7 @@ def generate_html(accounts: list[str], title: str, subtitle: str, color: str, fi
     """Generate a clickable HTML file."""
     esc_title = html_mod.escape(title)
     esc_subtitle = html_mod.escape(subtitle)
-    html = f'''<html><head><title>{esc_title} ({len(accounts)})</title>
+    html = f'''<html><head><meta charset="utf-8"><title>{esc_title} ({len(accounts)})</title>
 <style>
 body{{font-family:monospace;font-size:14px;padding:20px;background:#111;color:#eee}}
 a{{color:{color};text-decoration:none}}
@@ -339,12 +339,12 @@ function updateStats() {
 '''
 
     html += '</body></html>'
-    Path(filename).write_text(html)
+    Path(filename).write_text(html, encoding="utf-8")
 
 
 def generate_summary_html(stats: dict, lists: dict, filename: str):
     """Generate a dashboard HTML with all lists and stats."""
-    html = '''<html><head><title>Instagram Analysis</title>
+    html = '''<html><head><meta charset="utf-8"><title>Instagram Analysis</title>
 <style>
 body{font-family:monospace;font-size:14px;padding:20px;background:#111;color:#eee;max-width:900px;margin:0 auto}
 h1{color:#4fc3f7;border-bottom:1px solid #333;padding-bottom:10px}
@@ -394,7 +394,7 @@ ul{padding-left:20px}li{padding:2px 0}
         html += '</ul></details>\n'
 
     html += '</body></html>'
-    Path(filename).write_text(html)
+    Path(filename).write_text(html, encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------

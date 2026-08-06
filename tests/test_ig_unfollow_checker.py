@@ -439,6 +439,43 @@ class TestGenerateSummaryHtml:
 
 
 # ---------------------------------------------------------------------------
+# Unit Tests — output encoding
+# ---------------------------------------------------------------------------
+
+
+class TestOutputEncoding:
+    """Both generators emit an em dash. Without a declared charset a browser
+    falls back to latin-1 and renders it as 'â€"', even though Python reads
+    the file back fine -- so these assert the declaration, not just the bytes.
+    """
+
+    def test_report_declares_utf8(self, tmp_path):
+        outfile = str(tmp_path / "report.html")
+        generate_html(["alice"], "Title", "Subtitle", "#fff", outfile)
+
+        raw = Path(outfile).read_bytes()
+        assert b'<meta charset="utf-8">' in raw
+        head = raw.split(b"</title>")[0]
+        assert b"charset" in head, "charset must be declared before the title"
+        assert "—".encode("utf-8") in raw
+        raw.decode("utf-8")
+
+    def test_dashboard_declares_utf8(self, tmp_path):
+        outfile = str(tmp_path / "dashboard.html")
+        generate_summary_html({"Following": 1}, {}, outfile)
+
+        raw = Path(outfile).read_bytes()
+        assert b'<meta charset="utf-8">' in raw
+        raw.decode("utf-8")
+
+    def test_non_ascii_title_survives_roundtrip(self, tmp_path):
+        outfile = str(tmp_path / "unicode.html")
+        generate_html(["alice"], "Café — naïve", "Sübtitle", "#fff", outfile)
+
+        assert "Café — naïve" in Path(outfile).read_text(encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
 # Unit Tests — relationship diffs
 # ---------------------------------------------------------------------------
 

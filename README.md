@@ -6,7 +6,7 @@ Analyze your Instagram following/followers and find out which accounts are **del
 - **Not following you back** — who you follow that doesn't follow you
 - **Fans** — who follows you that you don't follow back
 - **Mutuals** — accounts you follow each other
-- **Ghost detector (!!!) ** — checks each profile with a real browser to see if it still exists
+- **Ghost detector (!!!)** — checks each profile with a real browser to see if it still exists
 - **Pending requests, recent unfollows** — everything in your export
 - **Bulk username checker** — give it any list of usernames to check if they still exist
 
@@ -19,6 +19,30 @@ No Instagram login. No third-party access. Your data stays on your machine.
 3. Opens each profile in a headless Chromium browser (via Playwright)
 4. Checks the page title to determine: **exists**, **deleted**, **private**, or **rate-limited**
 5. Generates clickable HTML reports with click-tracking and a summary dashboard
+
+## What it looks like
+
+<img src="docs/screenshots/summary.png" width="860" alt="Summary card: 605 accounts you follow, minus the 453 who follow you back, leaves 152 not following you back; after checking each one, 124 are still active, 26 are deleted or deactivated, and 2 are inconclusive">
+
+Point it at the export and walk away. Every account is checked one at a time and progress is printed as it goes, so an interrupted run tells you exactly where to resume.
+
+<img src="docs/screenshots/terminal-run.png" width="720" alt="Terminal output: 605 following, 573 followers, 152 not following back, then a per-account check log ending in a summary of 124 active, 26 deleted and 2 inconclusive accounts">
+
+`dashboard.html` is the one to open first — the counts up top, a link to every report, and the extra lists from your export tucked into collapsible sections.
+
+<img src="docs/screenshots/dashboard.png" width="720" alt="Dashboard page: stat tiles for 605 following, 573 followers, 453 mutuals, 152 not following back and 120 fans, followed by links to each generated report and collapsible sections for pending follow requests, recent follow requests, recently unfollowed and follow requests received">
+
+The active list is the one you work through — accounts that really exist and really don't follow you back.
+
+<img src="docs/screenshots/active-report.png" width="860" alt="The active_not_following_back.html report: a numbered list of profile links, several greyed out with click counts beside them, a 'Clicked: 22 / 124' badge in the corner, and callouts explaining that the badge counts every profile opened and that (3x) means a link was opened three times">
+
+The `(1x)` / `(2x)` markers are click counts: each link records how many times you've opened it and darkens as it goes — blue when untouched, grey after one visit, darker at two and three. Instagram has no bulk unfollow, so you open every profile by hand; the counts are how you pick up where you left off, and anything at `(2x)` or more is usually one whose unfollow didn't take the first time. Counts live in your browser under a single key shared by every report, so a username you already dealt with still shows its count when it turns up in another list. That also means the `Clicked:` badge counts everything you've ever opened, not just the page you're on, so its number can run ahead of that page's total.
+
+<img src="docs/screenshots/deleted-report.png" width="860" alt="The deleted_accounts.html report: a numbered list of red profile links, with a callout explaining that none of these profiles exist any more">
+
+The ghost list is the payoff. Instagram counts these accounts in your following list but never tells you they're gone, so the only alternative is opening a few hundred profiles by hand to find out.
+
+<sub>Screenshots come from a real run of the pipeline over a synthetic export — every handle shown is a placeholder, and the active/deleted proportions match an actual 1,066-account run. Regenerate them with <code>python3 docs/make_screenshots.py</code>.</sub>
 
 ## Setup
 
