@@ -27,6 +27,8 @@ from ig_unfollow_checker import (
     load_usernames_from_file,
     diff_exports,
     check_account,
+    extract_bio,
+    assert_logged_out,
     generate_html,
     generate_summary_html,
 )
@@ -672,3 +674,136 @@ class TestSmoke:
         following, followers = extract_usernames_from_zip(str(zips[0]))
         assert len(following) > 0, "Following list should not be empty"
         assert len(followers) > 0, "Followers list should not be empty"
+
+
+# ---------------------------------------------------------------------------
+# Unit Tests — bio capture
+#
+# The profile page renders name, bio and counts while logged out, so reading
+# them costs no request beyond the one check_account already makes. These
+# tests pin the two rules that matter: a bio must never change the
+# exists/not-found verdict, and a missing bio is a normal profile.
+# ---------------------------------------------------------------------------
+
+
+def _header(text):
+    """A mock page whose <header> yields this text."""
+    page = MagicMock()
+    loc = MagicMock()
+    first = MagicMock()
+    first.inner_text.return_value = text
+    loc.first = first
+    page.locator.return_value = loc
+    return page
+
+
+NASA_HEADER = (
+    "nasa\n104M followers\n92 following\nNASA\n"
+    "Making the seemingly impossible, possible.\nwww.nasa.gov"
+)
+
+
+class TestExtractBio:
+    def test_pulls_name_bio_link_and_counts(self):
+        got = extract_bio(_header(NASA_HEADER), "nasa")
+        assert got["full_name"] == "NASA"
+        assert got["bio"] == "Making the seemingly impossible, possible."
+        assert got["external_link"] == "www.nasa.gov"
+        assert got["followers"] == "104M"
+        assert got["following"] == "92"
+
+    def test_username_and_chrome_are_not_mistaken_for_bio(self):
+        got = extract_bio(_header(
+            "someone\n1,204 followers\n83 following\nFollow\nMessage\n"
+            "Show more posts\nAccounts you might like"), "someone")
+        assert got["full_name"] is None
+        assert got["bio"] is None
+
+    def test_a_profile_with_no_bio_is_not_an_error(self):
+        got = extract_bio(_header("plainuser\n12 followers\n30 following\nPlain User"),
+                          "plainuser")
+        assert got["full_name"] == "Plain User"
+        assert got["bio"] is None
+
+    def test_multiline_bio_is_joined(self):
+        got = extract_bio(_header(
+            "x\n5 followers\n5 following\nX Person\nline one\nline two"), "x")
+        assert got["bio"] == "line one\nline two"
+
+    def test_a_header_that_will_not_load_returns_empty_not_raise(self):
+        page = MagicMock()
+        page.locator.side_effect = Exception("detached")
+        got = extract_bio(page, "whoever")
+        assert got == {"full_name": None, "bio": None, "external_link": None,
+                       "followers": None, "following": None}
+
+
+class TestBioDoesNotChangeVerdict:
+    def test_exists_still_exists_and_gains_bio(self, mock_page):
+        mock_page.title.return_value = "NASA (@nasa) • Instagram photos and videos"
+        mock_page.url = "https://www.instagram.com/nasa/"
+        loc = MagicMock(); first = MagicMock()
+        first.inner_text.return_value = NASA_HEADER
+        loc.first = first; mock_page.locator.return_value = loc
+
+        r = check_account(mock_page, "nasa")
+        assert r["status"] == "EXISTS"
+        assert r["bio"] == "Making the seemingly impossible, possible."
+
+    def test_not_found_is_untouched_by_bio_code(self, mock_page):
+        mock_page.title.return_value = "Profile isn't available • Instagram"
+        mock_page.url = "https://www.instagram.com/gone/"
+        r = check_account(mock_page, "gone")
+        assert r["status"] == "NOT_FOUND"
+        assert "bio" not in r
+
+    def test_a_broken_header_cannot_break_the_verdict(self, mock_page):
+        mock_page.title.return_value = "Someone (@someone) • Instagram photos and videos"
+        mock_page.url = "https://www.instagram.com/someone/"
+        mock_page.locator.side_effect = Exception("boom")
+        r = check_account(mock_page, "someone")
+        assert r["status"] == "EXISTS"
+        assert r["bio"] is None
+
+
+# ---------------------------------------------------------------------------
+# Unit Tests — the no-login guarantee
+#
+# Public bios need no session. A session would make every page load an
+# authenticated action attributable to the account, so its presence is a
+# reason to abort, not something to work around.
+# ---------------------------------------------------------------------------
+
+
+def _ctx(cookies):
+    ctx = MagicMock()
+    ctx.cookies.return_value = cookies
+    return ctx
+
+
+class TestAssertLoggedOut:
+    def test_a_clean_context_passes(self):
+        assert_logged_out(_ctx([])) is None
+
+    def test_harmless_cookies_from_other_sites_are_ignored(self):
+        assert_logged_out(_ctx([
+            {"name": "sessionid", "domain": ".example.com"},
+            {"name": "_ga", "domain": ".instagram.com"},
+        ])) is None
+
+    def test_a_session_cookie_aborts(self):
+        with pytest.raises(RuntimeError, match="session"):
+            assert_logged_out(_ctx([
+                {"name": "sessionid", "domain": ".instagram.com"}]))
+
+    def test_a_user_id_cookie_aborts(self):
+        with pytest.raises(RuntimeError, match="ds_user_id"):
+            assert_logged_out(_ctx([
+                {"name": "ds_user_id", "domain": "www.instagram.com"}]))
+
+    def test_the_error_never_prints_the_cookie_value(self):
+        with pytest.raises(RuntimeError) as e:
+            assert_logged_out(_ctx([
+                {"name": "sessionid", "domain": ".instagram.com",
+                 "value": "SUPERSECRETSESSIONVALUE"}]))
+        assert "SUPERSECRETSESSIONVALUE" not in str(e.value)

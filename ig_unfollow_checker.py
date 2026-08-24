@@ -150,6 +150,89 @@ def load_usernames_from_file(filepath: str) -> list[str]:
 # Account checking
 # ---------------------------------------------------------------------------
 
+# Bio text sits in the header <section>; the profile page renders it logged out,
+# so reading it costs no extra request beyond the one check_account already
+# makes. Everything below is best-effort: a missing bio is a normal profile,
+# not an error, and must never change the EXISTS/NOT_FOUND verdict.
+BIO_NOISE_RE = re.compile(
+    r"^(followers?|following|posts?|Follow|Message|"
+    r"Show more posts|Accounts you might like|See all|Log ?[Ii]n|Sign ?up)$")
+COUNT_RE = re.compile(r"^[\d.,]+[KMB]?\s+(followers?|following|posts?)$", re.I)
+
+
+def _clean_bio_lines(lines: list[str], username: str) -> list[str]:
+    """Strip the handle, the counts and the button chrome; keep the rest.
+
+    The handle is dropped only ONCE. Plenty of accounts set a display name
+    that differs from the handle by case alone ("nasa" / "NASA"), and
+    filtering every case-insensitive match threw the display name away.
+    """
+    out = []
+    dropped_handle = False
+    for raw in lines:
+        line = raw.strip()
+        if not line:
+            continue
+        if not dropped_handle and line.lower() == username.lower():
+            dropped_handle = True
+            continue
+        if BIO_NOISE_RE.match(line) or COUNT_RE.match(line):
+            continue
+        out.append(line)
+    return out
+
+
+def extract_bio(page, username: str) -> dict:
+    """Best-effort display name, bio text, link and counts from a loaded page."""
+    info = {"full_name": None, "bio": None, "external_link": None,
+            "followers": None, "following": None}
+    try:
+        header = page.locator("header").first.inner_text(timeout=4000)
+    except Exception:
+        return info
+    lines = [l for l in header.splitlines()]
+    for l in lines:
+        m = re.match(r"^([\d.,]+[KMB]?)\s+followers?$", l.strip(), re.I)
+        if m:
+            info["followers"] = m.group(1)
+        m = re.match(r"^([\d.,]+[KMB]?)\s+following$", l.strip(), re.I)
+        if m:
+            info["following"] = m.group(1)
+    body = _clean_bio_lines(lines, username)
+    if body:
+        # First surviving line is the display name; the rest is the bio.
+        info["full_name"] = body[0]
+        rest = [l for l in body[1:] if not l.startswith("www.")
+                and not re.match(r"^https?://", l)]
+        links = [l for l in body[1:] if l.startswith("www.")
+                 or re.match(r"^https?://", l)]
+        if rest:
+            info["bio"] = "\n".join(rest)
+        if links:
+            info["external_link"] = links[0]
+    return info
+
+
+# Instagram auth cookies. Their presence means the browser is acting AS the
+# user, which turns an anonymous, IP-throttled page load into an authenticated
+# action attributable to the account. Public bios do not need any of them, so
+# their presence is a bug to abort on rather than a convenience to exploit.
+AUTH_COOKIES = {"sessionid", "ds_user_id", "csrftoken", "ig_did", "shbid"}
+
+
+def assert_logged_out(context) -> None:
+    """Refuse to continue if the browser carries an Instagram session."""
+    live = {c["name"] for c in context.cookies()
+            if "instagram" in c.get("domain", "")}
+    leaked = live & {"sessionid", "ds_user_id"}
+    if leaked:
+        raise RuntimeError(
+            "Refusing to run: the browser holds Instagram session cookies "
+            f"({', '.join(sorted(leaked))}). Public profile data needs no "
+            "login, and sending a session makes every request attributable "
+            "to your account.")
+
+
 def check_account(page, username: str) -> dict:
     """Navigate to profile and determine if it exists from page title."""
     url = f"https://www.instagram.com/{username}/"
@@ -167,11 +250,14 @@ def check_account(page, username: str) -> dict:
             return {"username": username, "status": "NOT_FOUND", "title": title}
 
         if f"(@{username})" in title or "Instagram photos and videos" in title:
-            return {"username": username, "status": "EXISTS", "title": title}
+            return {"username": username, "status": "EXISTS", "title": title,
+                    **extract_bio(page, username)}
 
         body_text = page.locator("body").inner_text()[:1000]
         if "This Account is Private" in body_text or "This account is private" in body_text:
-            return {"username": username, "status": "EXISTS_PRIVATE", "title": title}
+            # A private account still shows name, bio and counts in the header.
+            return {"username": username, "status": "EXISTS_PRIVATE", "title": title,
+                    **extract_bio(page, username)}
 
         return {"username": username, "status": "UNKNOWN", "title": title}
 
@@ -205,11 +291,17 @@ def run_checks(usernames: list[str], start_at: int, results_path: Path, show_bro
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=not show_browser)
+        # storage_state is deliberately omitted: a fresh context starts with
+        # no cookies, no localStorage and no service workers, so nothing can
+        # carry a session in from a previous run or the real browser profile.
         context = browser.new_context(
             user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             viewport={"width": 1280, "height": 800},
+            storage_state=None,
         )
+        assert_logged_out(context)
         page = context.new_page()
+        print("  Anonymous: no session cookies present.")
 
         for i, username in enumerate(to_check):
             result = check_account(page, username)
@@ -237,6 +329,10 @@ def run_checks(usernames: list[str], start_at: int, results_path: Path, show_bro
                 "total_checked": len(all_results),
                 "results": all_results,
             }, indent=2))
+
+            # A redirect through the login wall can plant cookies mid-run.
+            if (i + 1) % 25 == 0:
+                assert_logged_out(context)
 
             if (i + 1) % BATCH_SIZE == 0 and i + 1 < len(to_check):
                 print(f"\n  --- Batch pause ({BATCH_PAUSE // 60}min) ---\n")
