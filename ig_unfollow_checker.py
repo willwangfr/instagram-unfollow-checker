@@ -265,20 +265,68 @@ def check_account(page, username: str) -> dict:
         return {"username": username, "status": "ERROR", "error": str(e)[:200]}
 
 
-def run_checks(usernames: list[str], start_at: int, results_path: Path, show_browser: bool) -> tuple[list[dict], bool]:
+def _cap(names: list[str], limit) -> list[str]:
+    """Trim the work list for a trial run, leaving resume semantics intact."""
+    return names[:limit] if limit else names
+
+
+def load_checkpoint(results_path: Path) -> tuple[list[dict], set]:
+    """Previous results and the usernames already decided.
+
+    Resuming by POSITION breaks whenever the input list changes - a fresh
+    export reorders and re-numbers everything, so --start-at 500 silently
+    skips a different 500 people. Resuming by USERNAME cannot drift.
+    """
+    if not results_path.exists():
+        return [], set()
+    try:
+        prev = json.loads(results_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return [], set()
+    results = prev.get("results", [])
+    # Only settled verdicts count as done. ERROR and LOGIN_WALL are retried:
+    # they mean "we could not tell", not "this account does not exist".
+    done = {r["username"] for r in results
+            if r.get("status") in ("EXISTS", "EXISTS_PRIVATE", "NOT_FOUND")}
+    return results, done
+
+
+def write_bios(results: list[dict], bios_path: Path) -> int:
+    """Write everyone whose bio we have, so a partial run is still useful."""
+    rows = [{k: r.get(k) for k in
+             ("username", "status", "full_name", "bio", "external_link",
+              "followers", "following")}
+            for r in results if r.get("full_name") or r.get("bio")]
+    tmp = bios_path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(
+        {"generated": datetime.now().isoformat(), "count": len(rows),
+         "profiles": rows}, indent=2, ensure_ascii=False))
+    # Atomic replace: a crash mid-write leaves the previous file intact
+    # rather than a truncated one.
+    tmp.replace(bios_path)
+    return len(rows)
+
+
+def run_checks(usernames: list[str], start_at: int, results_path: Path,
+               show_browser: bool, resume: bool = False,
+               bios_path: Path = None) -> tuple[list[dict], bool]:
     """Run Playwright checks on a list of usernames. Returns (results, stopped_early)."""
-    to_check = usernames[start_at:]
+    all_results, done = [], set()
+    if resume:
+        all_results, done = load_checkpoint(results_path)
+        if done:
+            print(f"  Resuming: {len(done)} already decided, retrying any "
+                  f"errors and rate-limited entries.")
+        to_check = [u for u in usernames if u not in done]
+    else:
+        to_check = usernames[start_at:]
+        if start_at > 0 and results_path.exists():
+            prev = json.loads(results_path.read_text())
+            all_results = prev.get("results", [])
+            print(f"  Loaded {len(all_results)} previous results")
     if not to_check:
         print("All accounts already checked.")
-        return [], False
-
-    # Load previous results if resuming
-    if start_at > 0 and results_path.exists():
-        prev = json.loads(results_path.read_text())
-        all_results = prev.get("results", [])
-        print(f"  Loaded {len(all_results)} previous results")
-    else:
-        all_results = []
+        return all_results, False
 
     print(f"\nChecking {len(to_check)} accounts with Playwright...")
     print("For best safety, use a VPN (see README).")
@@ -301,6 +349,7 @@ def run_checks(usernames: list[str], start_at: int, results_path: Path, show_bro
         )
         assert_logged_out(context)
         page = context.new_page()
+        next_pause = random.randint(int(BATCH_SIZE * 0.7), int(BATCH_SIZE * 1.3))
         print("  Anonymous: no session cookies present.")
 
         for i, username in enumerate(to_check):
@@ -329,16 +378,26 @@ def run_checks(usernames: list[str], start_at: int, results_path: Path, show_bro
                 "total_checked": len(all_results),
                 "results": all_results,
             }, indent=2))
+            if bios_path is not None:
+                write_bios(all_results, bios_path)
 
             # A redirect through the login wall can plant cookies mid-run.
             if (i + 1) % 25 == 0:
                 assert_logged_out(context)
 
-            if (i + 1) % BATCH_SIZE == 0 and i + 1 < len(to_check):
-                print(f"\n  --- Batch pause ({BATCH_PAUSE // 60}min) ---\n")
-                time.sleep(BATCH_PAUSE)
+            if i + 1 >= next_pause and i + 1 < len(to_check):
+                pause = BATCH_PAUSE * random.uniform(0.75, 1.4)
+                print(f"\n  --- Batch pause ({pause / 60:.1f}min) ---\n")
+                time.sleep(pause)
+                next_pause = i + 1 + random.randint(
+                    int(BATCH_SIZE * 0.7), int(BATCH_SIZE * 1.3))
             else:
-                time.sleep(random.uniform(MIN_DELAY, MAX_DELAY))
+                d = random.uniform(MIN_DELAY, MAX_DELAY)
+                # Occasional longer gap: a perfectly uniform inter-request
+                # distribution is itself a fingerprint.
+                if random.random() < 0.08:
+                    d += random.uniform(8, 25)
+                time.sleep(d)
 
         browser.close()
 
@@ -510,6 +569,11 @@ def main():
     parser.add_argument("--diff", nargs=2, metavar=("OLD_ZIP", "NEW_ZIP"), help="Compare two exports to find who unfollowed/blocked you")
     parser.add_argument("--analyze-only", action="store_true", help="Only analyze the zip, skip browser checks")
     parser.add_argument("--start-at", type=int, default=0, help="Resume from position N")
+    parser.add_argument("--resume", action="store_true",
+                        help="Continue from results.json, skipping accounts already "
+                             "decided and retrying errors/rate-limited entries")
+    parser.add_argument("--limit", type=int,
+                        help="Check at most N accounts this run (for a trial run)")
     parser.add_argument("--output-dir", default=".", help="Output directory")
     parser.add_argument("--show-browser", action="store_true")
     args = parser.parse_args()
@@ -520,6 +584,7 @@ def main():
     out = Path(args.output_dir)
     out.mkdir(exist_ok=True)
     results_path = out / "results.json"
+    bios_path = out / "bios.json"
 
     # =======================================================================
     # MODE 0: Diff two exports
@@ -569,7 +634,8 @@ def main():
 
         if check_candidates and not args.analyze_only:
             print(f"\n  Checking {len(check_candidates)} lost/possibly-blocked accounts...")
-            all_results, stopped_early = run_checks(check_candidates, args.start_at, results_path, args.show_browser)
+            all_results, stopped_early = run_checks(_cap(check_candidates, args.limit), args.start_at, results_path,
+                                                 args.show_browser, args.resume, bios_path)
 
             exists = sorted([r['username'] for r in all_results if r['status'] in ('EXISTS', 'EXISTS_PRIVATE')])
             not_found = sorted([r['username'] for r in all_results if r['status'] == 'NOT_FOUND'])
@@ -603,7 +669,8 @@ def main():
         usernames = load_usernames_from_file(filepath)
         print(f"Loaded {len(usernames)} usernames from {filepath}")
 
-        all_results, stopped_early = run_checks(usernames, args.start_at, results_path, args.show_browser)
+        all_results, stopped_early = run_checks(_cap(usernames, args.limit), args.start_at, results_path,
+                                                 args.show_browser, args.resume, bios_path)
 
         exists = sorted([r['username'] for r in all_results if r['status'] in ('EXISTS', 'EXISTS_PRIVATE')])
         not_found = sorted([r['username'] for r in all_results if r['status'] == 'NOT_FOUND'])
@@ -702,7 +769,8 @@ def main():
         return
 
     # --- Step 2: Check which "not following back" accounts still exist ---
-    all_results, stopped_early = run_checks(not_following_back, args.start_at, results_path, args.show_browser)
+    all_results, stopped_early = run_checks(_cap(not_following_back, args.limit), args.start_at, results_path,
+                                             args.show_browser, args.resume, bios_path)
 
     # --- Step 3: Generate checked output ---
     exists = sorted([r['username'] for r in all_results if r['status'] in ('EXISTS', 'EXISTS_PRIVATE')])

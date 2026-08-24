@@ -29,6 +29,9 @@ from ig_unfollow_checker import (
     check_account,
     extract_bio,
     assert_logged_out,
+    load_checkpoint,
+    write_bios,
+    _cap,
     generate_html,
     generate_summary_html,
 )
@@ -807,3 +810,59 @@ class TestAssertLoggedOut:
                 {"name": "sessionid", "domain": ".instagram.com",
                  "value": "SUPERSECRETSESSIONVALUE"}]))
         assert "SUPERSECRETSESSIONVALUE" not in str(e.value)
+
+
+# ---------------------------------------------------------------------------
+# Unit Tests — checkpoint / resume / incremental bios
+# ---------------------------------------------------------------------------
+
+
+class TestCheckpoint:
+    def test_no_checkpoint_yet(self, tmp_path):
+        results, done = load_checkpoint(tmp_path / "nope.json")
+        assert results == [] and done == set()
+
+    def test_only_settled_verdicts_count_as_done(self, tmp_path):
+        p = tmp_path / "results.json"
+        p.write_text(json.dumps({"results": [
+            {"username": "a", "status": "EXISTS"},
+            {"username": "b", "status": "NOT_FOUND"},
+            {"username": "c", "status": "EXISTS_PRIVATE"},
+            {"username": "d", "status": "ERROR"},
+            {"username": "e", "status": "LOGIN_WALL"},
+        ]}))
+        results, done = load_checkpoint(p)
+        assert len(results) == 5
+        # ERROR and LOGIN_WALL mean "could not tell", so they are retried.
+        assert done == {"a", "b", "c"}
+
+    def test_a_truncated_checkpoint_does_not_crash_the_run(self, tmp_path):
+        p = tmp_path / "results.json"
+        p.write_text('{"results": [{"username": "a", "stat')
+        assert load_checkpoint(p) == ([], set())
+
+    def test_bios_file_holds_only_profiles_with_content(self, tmp_path):
+        p = tmp_path / "bios.json"
+        n = write_bios([
+            {"username": "a", "status": "EXISTS", "full_name": "A", "bio": "hi"},
+            {"username": "b", "status": "NOT_FOUND"},
+            {"username": "c", "status": "EXISTS"},
+        ], p)
+        assert n == 1
+        data = json.loads(p.read_text())
+        assert data["count"] == 1
+        assert data["profiles"][0]["username"] == "a"
+
+    def test_bios_write_is_atomic(self, tmp_path):
+        p = tmp_path / "bios.json"
+        write_bios([{"username": "a", "full_name": "A"}], p)
+        first = p.read_text()
+        write_bios([{"username": "a", "full_name": "A"},
+                    {"username": "b", "full_name": "B"}], p)
+        assert json.loads(p.read_text())["count"] == 2
+        assert not (tmp_path / "bios.tmp").exists()
+        assert first != p.read_text()
+
+    def test_cap_limits_a_trial_run(self):
+        assert _cap(["a", "b", "c"], 2) == ["a", "b"]
+        assert _cap(["a", "b", "c"], None) == ["a", "b", "c"]
