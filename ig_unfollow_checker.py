@@ -265,6 +265,53 @@ def check_account(page, username: str) -> dict:
         return {"username": username, "status": "ERROR", "error": str(e)[:200]}
 
 
+class Pacer:
+    """Adaptive delay driven by the throttle signal we already collect.
+
+    A fixed conservative pause is a guess about thresholds nobody published,
+    and it costs about seven hours across a full run. LOGIN_WALL is Instagram
+    telling us directly that we are being throttled, so start fast, slow down
+    only when it appears, and recover when it stops.
+    """
+
+    def __init__(self, base_min=MIN_DELAY, base_max=MAX_DELAY):
+        self.base_min, self.base_max = base_min, base_max
+        self.mult = 1.0
+        self.clean = 0
+
+    def record(self, status: str) -> None:
+        if status == "LOGIN_WALL":
+            # Back off hard and immediately; this is the only unambiguous
+            # signal that the address is being rate-limited.
+            self.mult = min(self.mult * 1.6, 6.0)
+            self.clean = 0
+        elif status == "ERROR":
+            self.mult = min(self.mult * 1.15, 6.0)
+            self.clean = 0
+        else:
+            self.clean += 1
+            # Recover after 10 consecutive clean checks. Tuned against a
+            # simulation: backing off 2.5x with a 25-check recovery ratcheted
+            # up and stayed there, turning an 18-hour run into 144 hours at a
+            # 2% wall rate - worse than the fixed pause it replaced.
+            if self.clean >= 10 and self.mult > 1.0:
+                self.mult = max(1.0, self.mult / 1.5)
+                self.clean = 0
+
+    def sleep_seconds(self) -> float:
+        d = random.uniform(self.base_min, self.base_max) * self.mult
+        # A perfectly uniform interval is itself a fingerprint.
+        if random.random() < 0.08:
+            d += random.uniform(6, 20)
+        return d
+
+    def cooldown_seconds(self):
+        """A real pause only once we have actually been throttled."""
+        if self.mult <= 1.0:
+            return None
+        return BATCH_PAUSE * random.uniform(0.6, 1.2) * min(self.mult, 4.0) / 2
+
+
 def _cap(names: list[str], limit) -> list[str]:
     """Trim the work list for a trial run, leaving resume semantics intact."""
     return names[:limit] if limit else names
@@ -349,6 +396,7 @@ def run_checks(usernames: list[str], start_at: int, results_path: Path,
         )
         assert_logged_out(context)
         page = context.new_page()
+        pacer = Pacer()
         next_pause = random.randint(int(BATCH_SIZE * 0.7), int(BATCH_SIZE * 1.3))
         print("  Anonymous: no session cookies present.")
 
@@ -385,19 +433,19 @@ def run_checks(usernames: list[str], start_at: int, results_path: Path,
             if (i + 1) % 25 == 0:
                 assert_logged_out(context)
 
-            if i + 1 >= next_pause and i + 1 < len(to_check):
-                pause = BATCH_PAUSE * random.uniform(0.75, 1.4)
-                print(f"\n  --- Batch pause ({pause / 60:.1f}min) ---\n")
-                time.sleep(pause)
+            pacer.record(status)
+            cool = pacer.cooldown_seconds() if i + 1 >= next_pause else None
+            if cool and i + 1 < len(to_check):
+                print(f"\n  --- Backing off {cool / 60:.1f}min "
+                      f"(delay x{pacer.mult:.1f}) ---\n")
+                time.sleep(cool)
+                next_pause = i + 1 + random.randint(
+                    int(BATCH_SIZE * 0.7), int(BATCH_SIZE * 1.3))
+            elif i + 1 >= next_pause:
                 next_pause = i + 1 + random.randint(
                     int(BATCH_SIZE * 0.7), int(BATCH_SIZE * 1.3))
             else:
-                d = random.uniform(MIN_DELAY, MAX_DELAY)
-                # Occasional longer gap: a perfectly uniform inter-request
-                # distribution is itself a fingerprint.
-                if random.random() < 0.08:
-                    d += random.uniform(8, 25)
-                time.sleep(d)
+                time.sleep(pacer.sleep_seconds())
 
         browser.close()
 

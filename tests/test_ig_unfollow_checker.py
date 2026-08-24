@@ -32,6 +32,7 @@ from ig_unfollow_checker import (
     load_checkpoint,
     write_bios,
     _cap,
+    Pacer,
     generate_html,
     generate_summary_html,
 )
@@ -866,3 +867,66 @@ class TestCheckpoint:
     def test_cap_limits_a_trial_run(self):
         assert _cap(["a", "b", "c"], 2) == ["a", "b"]
         assert _cap(["a", "b", "c"], None) == ["a", "b", "c"]
+
+
+# ---------------------------------------------------------------------------
+# Unit Tests — adaptive pacing
+#
+# LOGIN_WALL is Instagram telling us directly that the address is throttled.
+# Pacing should be driven by that signal rather than by a guessed constant,
+# so the run stays fast while it is welcome and slows only when it is not.
+# ---------------------------------------------------------------------------
+
+
+class TestPacer:
+    def test_starts_fast_with_no_cooldown(self):
+        p = Pacer()
+        assert p.mult == 1.0
+        # Nothing has gone wrong yet, so there is nothing to back off from.
+        assert p.cooldown_seconds() is None
+
+    def test_a_login_wall_backs_off_immediately(self):
+        p = Pacer()
+        p.record("LOGIN_WALL")
+        assert p.mult > 1.0
+        assert p.cooldown_seconds() > 0
+
+    def test_backoff_is_bounded(self):
+        p = Pacer()
+        for _ in range(50):
+            p.record("LOGIN_WALL")
+        assert p.mult <= 20.0
+
+    def test_errors_back_off_more_gently_than_login_walls(self):
+        a, b = Pacer(), Pacer()
+        a.record("ERROR")
+        b.record("LOGIN_WALL")
+        assert 1.0 < a.mult < b.mult
+
+    def test_recovery_needs_a_sustained_clean_run(self):
+        p = Pacer()
+        p.record("LOGIN_WALL")
+        hot = p.mult
+        for _ in range(9):
+            p.record("EXISTS")
+        assert p.mult == hot          # a short clean streak is not enough
+        p.record("EXISTS")            # the tenth trips recovery
+        assert p.mult < hot
+
+    def test_recovery_never_goes_below_baseline(self):
+        p = Pacer()
+        for _ in range(500):
+            p.record("EXISTS")
+        assert p.mult == 1.0
+
+    def test_delay_scales_with_the_multiplier(self):
+        # Compare MEANS, not min against max: roughly one delay in twelve
+        # carries an extra 6-20s of jitter, so the tails of the two
+        # distributions overlap by design.
+        slow, fast = Pacer(), Pacer()
+        for _ in range(3):
+            slow.record("LOGIN_WALL")
+        n = 400
+        s = sum(slow.sleep_seconds() for _ in range(n)) / n
+        f = sum(fast.sleep_seconds() for _ in range(n)) / n
+        assert s > f * 2
