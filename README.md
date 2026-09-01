@@ -1,33 +1,61 @@
 # ig-unfollow-checker
 
-Analyze your Instagram following/followers and find out which accounts are **deleted, deactivated, or ghost profiles** — without logging into any sketchy third-party app.
+Analyse your Instagram relationships from your own data — who never followed
+you back, who left and when, who blocked you, and which accounts are dead.
 
-**What it does:**
-- **Not following you back** — who you follow that doesn't follow you
-- **Fans** — who follows you that you don't follow back
-- **Mutuals** — accounts you follow each other
-- **Ghost detector (!!!) ** — checks each profile with a real browser to see if it still exists
-- **Pending requests, recent unfollows** — everything in your export
-- **Bulk username checker** — give it any list of usernames to check if they still exist
+**No login. No password. No third-party service.** Your data never leaves your
+machine.
 
-No Instagram login. No third-party access. Your data stays on your machine.
+## Two tools, and the difference matters
 
-## How it works
+This repository holds two things with very different risk profiles. Keep them
+straight before you use or fork it.
 
-1. Parses followers/following from your Instagram HTML export (or a plain text list)
-2. Computes all relationship diffs (not following back, fans, mutuals)
-3. Opens each profile in a headless Chromium browser (via Playwright)
-4. Checks the page title to determine: **exists**, **deleted**, **private**, or **rate-limited**
-5. Generates clickable HTML reports with click-tracking and a summary dashboard
+### 1. The export analysis — reads your own data
+
+`analysis/` parses the data export Instagram is legally obliged to give you.
+It never contacts Instagram's servers, needs no credentials, and everything
+stays local. There is no terms-of-service question here: it is your data, and
+this is a file parser.
+
+Most of what is interesting lives on this side:
+
+- **Every follow is timestamped.** The export records when you followed each
+  account and when each follower followed you, going back years.
+- **Follow timeline.** Two or more exports over time show who left and roughly
+  when. Instagram logs the follows you remove but never the ones removed from
+  you, so a departure is dated to a window between exports, never a moment.
+- **Block detection.** Instagram keeps a log of accounts *you* unfollowed. A
+  follow that disappeared without a matching entry was removed by someone else
+  — which is what a block leaves behind. Cross-referencing the two separates
+  "you unfollowed them" from "they blocked you".
+- **Username-change detection.** Handles churn constantly, and a rename looks
+  exactly like an unfollow in a naive diff. Continuity of a handle in your own
+  following list distinguishes them.
+- **DM metadata.** Message counts, first and last contact, and who spoke last,
+  per person. Metadata only by default — never message bodies.
+
+### 2. The profile checker — visits Instagram
+
+`ig_unfollow_checker.py` opens profile pages in a headless browser, logged out,
+to tell a live account from a deleted one and to read public bios and counts.
+
+This is the part that **may violate Instagram's Terms of Use** (see the
+disclaimer). It is rate-limited, backs off when throttled, and refuses to run
+if it finds a session cookie — but it is still automated access, and that is a
+different risk category from parsing a file. Use a VPN. If you only want the
+safe half, run `analysis/` and never run this.
 
 ## Setup
 
 ```bash
-pip install playwright
+pip install playwright        # only needed for the profile checker
 python -m playwright install chromium
+cp snapshots.example.json snapshots.json   # then edit it
 ```
 
-## Usage
+`snapshots.json` holds the paths to your own exports. It is gitignored and must
+stay that way — it identifies you.
 
 ### 1. Download your Instagram data (HTML format)
 
@@ -92,111 +120,62 @@ ProtonVPN Free is the best option — unlimited data, no-logs policy, and easy t
 
 > **Note:** Tor does NOT work. Instagram blocks all Tor exit nodes.
 
-### 3. Run
+### 3. Analyse — no network
 
 ```bash
-# Full analysis from Instagram export (analyze + check accounts)
-python3 ig_unfollow_checker.py your-export.zip
-
-# Just analyze (no browser checks — instant, no VPN needed)
-python3 ig_unfollow_checker.py your-export.zip --analyze-only
-
-# Check a custom list of usernames
-python3 ig_unfollow_checker.py --check-list usernames.txt
+python3 analysis/build_everyone.py --config snapshots.json
 ```
 
-The `--check-list` file can contain usernames in any format:
-```
-someuser
-@anotheruser
-https://www.instagram.com/thirduser/
-# comments are ignored
-```
+One row per person you follow or who follows you, with follow dates, DM
+history, and a verdict, as a sortable page and a CSV. Other entry points:
+`build_unfollow_shortlist.py` for ranked unfollow candidates,
+`build_dm_index.py` for per-person message history, `make_lists.py` for every
+bucket as plain text.
 
-### 4. If rate-limited, switch VPN server and resume
+Two exports are enough for a timeline; more is better. Export monthly and keep
+the zips — the resolution of every "when did they leave" answer is the gap
+between your snapshots.
+
+### 4. Check which accounts still exist — network, use a VPN
 
 ```bash
-python3 ig_unfollow_checker.py your-export.zip --start-at 500
+python3 ig_unfollow_checker.py your-export.zip --analyze-only   # no network
+python3 ig_unfollow_checker.py your-export.zip                  # visits profiles
+python3 ig_unfollow_checker.py your-export.zip --resume          # after a stop
+python3 ghost_grade.py results.json                              # grade the results
 ```
 
-### 5. (Power Users) Compare exports over time — detect unfollows and possible blocks
+Roughly 8 seconds per account. Results save after every check and resume by
+username, so an interruption costs nothing. Three consecutive login walls stop
+the run; switch VPN server and resume.
 
-If you save your Instagram exports periodically, you can compare them to see exactly who unfollowed you, who you gained, and who might have **blocked** you.
+## What it will not tell you
 
-```bash
-python3 ig_unfollow_checker.py --diff old-export.zip new-export.zip
-```
+- **When someone unfollowed you.** Instagram does not log it. Only the window
+  between two of your exports.
+- **Whether someone blocked you, for certain.** A block is invisible to a
+  logged-out visitor. The log cross-reference gives a strong signal, not proof.
+- **Whether someone never followed you.** Only that they are absent from the
+  snapshots you have, under the handle they use now.
 
-This generates:
-- **Lost followers** — people who were following you before but aren't now
-- **New followers** — people who started following you
-- **You unfollowed** — accounts you stopped following
-- **You started following** — new accounts you followed
-- **Possible blocks** — accounts that were **mutual** (you followed each other) but now they don't follow you anymore. This is the strongest signal of a block, since mutuals rarely just unfollow.
+Claims are reported at the confidence the data supports. "Cannot verify" is a
+real answer here, and a common one.
 
-It then optionally checks each "lost follower" with the browser to determine if they deleted their account or are still active (and therefore either unfollowed or blocked you).
+## Privacy
 
-> **Tip:** Export your data monthly and keep the zips. Name them by date (Instagram does this automatically). The more snapshots you have, the more useful this feature becomes.
-
-## Output files
-
-| File | Description |
-|------|-------------|
-| `dashboard.html` | Summary overview with stats and links to all reports |
-| `not_following_back.html` | Accounts you follow that don't follow you (click-tracked) |
-| `fans_you_dont_follow.html` | Accounts that follow you but you don't follow back (click-tracked) |
-| `mutuals.html` | Accounts you follow each other |
-| `active_not_following_back.html` | Verified existing accounts not following you back |
-| `deleted_accounts.html` | Confirmed deleted/deactivated ghost accounts |
-| `inconclusive_accounts.html` | Couldn't determine status (rate-limited) |
-| `results.json` | Raw data for all browser checks |
-| `.txt` files | Plain text versions of each list |
-
-Additional HTML files are generated for any pending requests, recent unfollows, or received follow requests found in your export.
-
-## Options
-
-```
---analyze-only          Just analyze the zip (no browser checks, no VPN needed)
---check-list FILE       Check a plain text file of usernames instead of a zip
---diff OLD_ZIP NEW_ZIP  Compare two exports to detect unfollows/blocks
---start-at N            Resume browser checks from position N (after rate limit)
---output-dir DIR        Save output files to DIR
---show-browser          Show the browser window (for debugging)
-```
+Nothing is uploaded. No credentials are requested or accepted — the checker
+aborts if it detects an Instagram session cookie, because public profile data
+needs no login and sending a session makes every request attributable to your
+account. Generated reports and any file derived from your export are gitignored;
+do not commit them.
 
 ## Tests
 
 ```bash
 pip install pytest
-pytest tests/                    # unit tests (fast, no network)
-pytest tests/ --run-smoke        # + smoke tests (hits real Instagram)
+pytest tests/                    # unit tests, no network
+pytest tests/ --run-smoke        # + tests that hit real Instagram
 ```
-
-## How rate limiting works
-
-- **4-9 second random delay** between each check
-- **3-minute pause** every 60 checks
-- **Auto-stops** after 3 consecutive login walls
-- Results save after every check — nothing lost on interruption
-- If rate-limited: switch VPN servers and resume with `--start-at`
-
-## FAQ
-
-**Why not just use an app?**
-Every Instagram follower-checker app requires your IG login. Many are sketchy and have been caught harvesting credentials. This tool uses no login at all.
-
-**Why Playwright instead of HTTP requests?**
-Instagram serves identical HTML shells for all profiles and renders content via JavaScript. Raw HTTP requests can't distinguish real from deleted accounts. Playwright runs the actual browser JavaScript.
-
-**Why VPN instead of Tor?**
-Instagram blocks all Tor exit nodes. VPN IPs are treated as normal residential users.
-
-**Can I get banned?**
-You're not logged in, not using your real IP, and the tool is conservative with rate limiting. The worst that happens is the VPN IP gets temporarily blocked (login wall) — just switch servers.
-
-**How long does it take?**
-`--analyze-only` is instant. Browser checks take ~4-9 seconds per account. 1,000 accounts = roughly 2-3 hours with batch pauses.
 
 ## Disclaimer
 
