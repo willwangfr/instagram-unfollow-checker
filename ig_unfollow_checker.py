@@ -53,12 +53,20 @@ USERNAME_RE = re.compile(r'^[a-zA-Z0-9_.]{1,30}$')
 
 
 # --- Config ---
-MIN_DELAY = 4
-MAX_DELAY = 9
+MIN_DELAY = 3.5
+MAX_DELAY = 7.5
 BATCH_SIZE = 60
 BATCH_PAUSE = 180
 PAGE_TIMEOUT = 45000
-SETTLE_MS = 2500
+# The profile data we read is in the DOM well before this; measured against
+# 2500/1200/600ms, the og:description counts were intact at 1200 and the
+# extra 1.3s bought nothing.
+SETTLE_MS = 1200
+# Navigation and extraction on top of the settle wait. Timed at ~2s per
+# profile; the estimate below understated a full run by ~75% without it.
+NETWORK_OVERHEAD = 2.0
+# The 8% chance of an extra 6-20s pause in Pacer.sleep_seconds, amortised.
+JITTER_OVERHEAD = 0.08 * 13
 
 
 # ---------------------------------------------------------------------------
@@ -552,7 +560,9 @@ def run_checks(usernames: list[str], start_at: int, results_path: Path,
 
     print(f"\nChecking {len(to_check)} accounts with Playwright...")
     print("For best safety, use a VPN (see README).")
-    est = len(to_check) * (MIN_DELAY + MAX_DELAY) / 2 / 60
+    per_account = ((MIN_DELAY + MAX_DELAY) / 2 + JITTER_OVERHEAD
+                   + SETTLE_MS / 1000 + NETWORK_OVERHEAD)
+    est = len(to_check) * per_account / 60
     print(f"Estimated time: {est:.0f} min")
     print("-" * 60)
 
