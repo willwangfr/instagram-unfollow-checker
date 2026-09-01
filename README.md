@@ -7,6 +7,46 @@ accounts are dead.
 **No login. No password. No third-party service.** Your data never leaves your
 machine.
 
+## What you get
+
+From your export alone, with no login and nothing installed but Python:
+
+| | |
+|---|---|
+| **Who doesn't follow you back** | Sorted into confidence tiers, not one flat list — see below |
+| **Every follow, timestamped** | When you followed them, when they followed you, going back years |
+| **Who left, and roughly when** | Across two or more exports; dated to the window between them |
+| **Renames told apart from unfollows** | A handle change looks exactly like an unfollow in a naive diff |
+| **Who most likely blocked you** | From Instagram's own log of the follows *you* removed |
+| **Dormant and empty accounts** | Zero-post shells and follow-farms, flagged separately |
+| **DM history per person** | Message counts, first and last contact, who spoke last, what you left unanswered |
+| **One searchable page** | Every account you follow or that follows you, sortable, with a verdict each |
+
+### Why confidence tiers
+
+"Doesn't follow you back" hides three different situations that deserve
+different decisions:
+
+- Someone you followed **three days ago** has not snubbed you. They have not
+  got round to it.
+- Someone whose **handle changed** may have been following you the whole time,
+  under a name your older exports do not contain.
+- Someone who followed you **for two years and then left** is a real signal.
+
+A flat list treats all three as the same fact. This one does not: each account
+is labelled with how much the data actually supports the claim, and
+**"cannot verify" is a normal answer**. On the account this was built against,
+42% of apparent unfollowers had merely renamed — every one of them a false
+accusation in a tool that does not check.
+
+### Who this is for
+
+This is a **command-line tool**. You will need to be comfortable with a
+terminal, a Python install, and editing a JSON file with paths in it. If that
+sentence sounds unpleasant, one of the drag-and-drop web uploaders will serve
+you better — this trades convenience for the fact that nothing ever leaves
+your machine.
+
 ## Two tools, and the difference matters
 
 This repository holds two things with very different risk profiles. Keep them
