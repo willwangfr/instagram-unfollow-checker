@@ -265,4 +265,13 @@ pytest tests/ --run-smoke        # + tests that hit real Instagram
 
 ## License
 
-MIT
+**GNU Affero General Public License v3.0 or later** (AGPL-3.0-or-later). See
+[LICENSE](LICENSE).
+
+You can use, modify and share this freely. The one obligation that matters: if
+you run a modified version **as a network service**, you must offer your users
+its source. Ordinary open-source licences do not cover software-as-a-service,
+and the tools this competes with are hosted services — this one is licensed so
+that improvements to it stay available to the people using it.
+
+Copyright (C) 2026 William Wang.

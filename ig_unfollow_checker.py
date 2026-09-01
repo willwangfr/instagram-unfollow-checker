@@ -1,3 +1,6 @@
+# Copyright (C) 2026 William Wang
+# Licensed under the GNU AGPL v3 or later. See LICENSE.
+# Run a modified version as a network service and you must offer users its source.
 """
 Instagram Unfollow Checker — All-in-One
 
@@ -53,8 +56,8 @@ USERNAME_RE = re.compile(r'^[a-zA-Z0-9_.]{1,30}$')
 
 
 # --- Config ---
-MIN_DELAY = 3.5
-MAX_DELAY = 7.5
+MIN_DELAY = 4.5
+MAX_DELAY = 9
 BATCH_SIZE = 60
 BATCH_PAUSE = 180
 PAGE_TIMEOUT = 45000

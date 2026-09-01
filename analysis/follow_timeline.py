@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (C) 2026 William Wang
+# Licensed under the GNU AGPL v3 or later. See LICENSE.
+# Run a modified version as a network service and you must offer users its source.
 """Reconstruct each account's follow history across every export snapshot.
 
 A single export says who follows you now. A stack of them says when each

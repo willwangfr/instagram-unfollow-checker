@@ -5,10 +5,13 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ig-unfollow-checker"
 version = "1.0.0"
-description = "Find deleted/deactivated Instagram accounts in your following list"
+description = "Analyse your Instagram relationships from your own data export"
 readme = "README.md"
 requires-python = ">=3.10"
-license = {text = "MIT"}
+license = {text = "AGPL-3.0-or-later"}
+classifiers = [
+    "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
+]
 dependencies = [
     "playwright>=1.40",
 ]

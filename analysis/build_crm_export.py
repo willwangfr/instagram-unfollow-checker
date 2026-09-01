@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (C) 2026 William Wang
+# Licensed under the GNU AGPL v3 or later. See LICENSE.
+# Run a modified version as a network service and you must offer users its source.
 """One row per person in your Instagram graph, with everything known about them.
 
 Three sources, in descending richness: the scraped profiles (name, bio, link,

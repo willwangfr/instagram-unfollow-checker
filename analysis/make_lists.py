@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (C) 2026 William Wang
+# Licensed under the GNU AGPL v3 or later. See LICENSE.
+# Run a modified version as a network service and you must offer users its source.
 """Write every bucket and tier out as plain text plus one clickable page."""
 
 import argparse, csv, datetime, html as html_mod, json, sys

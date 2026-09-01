@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (C) 2026 William Wang
+# Licensed under the GNU AGPL v3 or later. See LICENSE.
+# Run a modified version as a network service and you must offer users its source.
 """Clickable list of who you follow that doesn't follow back, ghosts removed.
 
 Merges three sources: the follow timeline (did they ever follow you, and in
