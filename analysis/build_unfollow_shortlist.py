@@ -174,8 +174,10 @@ automatically &mdash; this is a list, not a queue.</p>''']
                 f'<td class="nm">{html_mod.escape(b.get("full_name") or "")}</td>'
                 f'<td class="meta">{html_mod.escape(" · ".join(meta))}</td></tr>')
         parts.append('</table></details>')
+        (HERE / "lists").mkdir(parents=True, exist_ok=True)
         (HERE / "lists" / f"unfollow_{key}.txt").write_text("\n".join(us) + "\n" if us else "")
 
+    (HERE / "lists").mkdir(parents=True, exist_ok=True)
     for k in excluded:
         excluded[k].sort(key=lambda u: -(age(u) or 0))
         (HERE / "lists" / f"excluded_{k}.txt").write_text(
