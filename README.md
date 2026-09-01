@@ -58,6 +58,23 @@ sentence sounds unpleasant, one of the drag-and-drop web uploaders will serve
 you better — this trades convenience for the fact that nothing ever leaves
 your machine.
 
+## No terminal? Use the web version
+
+`web/index.html` does the export analysis in your browser. Drop your ZIP on it
+and you get the same reports — no Python, no install, no command line.
+
+**Nothing is uploaded.** There is no server and the page makes no network
+requests at all: it has no dependencies, reads the ZIP through the browser's
+own decompression, and works with wifi switched off. That is checkable in the
+network tab rather than something you have to take on trust.
+
+Drop two or more exports from different dates to unlock the timeline, rename
+detection and block detection.
+
+To run it locally: `python3 -m http.server --directory web` and open
+`http://localhost:8000`. It needs to be served rather than opened as a file,
+because browsers block ES modules on `file://`.
+
 ## Two tools, and the difference matters
 
 This repository holds two things with very different risk profiles. Keep them
