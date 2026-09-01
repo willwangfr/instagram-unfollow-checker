@@ -66,12 +66,19 @@ def main():
     v2 = json.loads((HERE / "continuity_v2.json").read_text())
     cont, everf = v2["continuity"], v2["ever_followed"]
     tl = json.loads((HERE / "follow_timeline.json").read_text())["not_following_back"]
-    ghost = {r["username"]: r["tier"]
-             for r in csv.DictReader((HERE / "ghosts/ghost_profiles.csv").open())}
+    # Ghost tiers come from the profile checker, which is optional: the export
+    # analysis has to stand on its own without ever touching Instagram.
+    gp = HERE / "ghosts/ghost_profiles.csv"
+    ghost = ({r["username"]: r["tier"] for r in csv.DictReader(gp.open())}
+             if gp.exists() else {})
+    if not ghost:
+        print("  (no ghost grading found — run the profile checker and "
+              "ghost_grade.py to separate dead accounts from live ones)")
     stable = set(json.loads((HERE / "handle_stability.json").read_text())["stable_handles"])
     dates = json.loads((HERE / "follow_dates.json").read_text())["following"]
-    bios = {p["username"]: p
-            for p in json.loads((HERE / "bios.json").read_text())["profiles"]}
+    bp = HERE / "bios.json"
+    bios = ({p["username"]: p
+             for p in json.loads(bp.read_text())["profiles"]} if bp.exists() else {})
     import datetime
     NOW = datetime.datetime(2026, 8, 30, 21, 39)
 

@@ -122,15 +122,29 @@ ProtonVPN Free is the best option — unlimited data, no-logs policy, and easy t
 
 ### 3. Analyse — no network
 
+Run step one first — everything else reads what it writes:
+
 ```bash
-python3 analysis/build_everyone.py --config snapshots.json
+python3 analysis/follow_timeline.py          # step 1: required
+python3 analysis/build_everyone.py           # everyone, sortable and searchable
+python3 analysis/build_unfollow_shortlist.py # ranked unfollow candidates
+python3 analysis/make_lists.py               # every bucket as plain text
+python3 analysis/build_crm_export.py         # flat export keyed by username
+python3 analysis/build_dm_index.py           # per-person DM history
 ```
 
-One row per person you follow or who follows you, with follow dates, DM
-history, and a verdict, as a sortable page and a CSV. Other entry points:
-`build_unfollow_shortlist.py` for ranked unfollow candidates,
-`build_dm_index.py` for per-person message history, `make_lists.py` for every
-bucket as plain text.
+All of them read `snapshots.json` from the current directory; pass `--config`
+to point somewhere else. Step one extracts the follow timestamps and works out
+which handles have been renamed; the rest depend on that.
+
+`build_everyone.py` gives one row per person you follow or who follows you,
+with follow dates, a verdict and DM history, as a sortable page and a CSV.
+`build_dm_index.py` needs the export unzipped as well as the zip, because the
+messages live as files rather than in one page.
+
+Everything here runs without the profile checker. If you have run it, bios,
+follower counts and ghost tiers appear as extra columns; if you have not, the
+same reports are produced without them.
 
 Two exports are enough for a timeline; more is better. Export monthly and keep
 the zips — the resolution of every "when did they leave" answer is the gap

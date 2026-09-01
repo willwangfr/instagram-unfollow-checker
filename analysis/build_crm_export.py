@@ -41,8 +41,11 @@ def main():
     graph = sorted(following | followers)
     dates = json.loads((HERE / "follow_dates.json").read_text())
     fo_on, fl_on = dates["following"], dates["followers"]
-    bios = {p["username"]: p
-            for p in json.loads((HERE / "bios.json").read_text())["profiles"]}
+    # Optional: produced by the profile checker. Without it the export still
+    # yields relationships, follow dates and the names Instagram itself ships.
+    bp = HERE / "bios.json"
+    bios = ({p["username"]: p
+             for p in json.loads(bp.read_text())["profiles"]} if bp.exists() else {})
     checks = {}
     for f in ("results.json", "blockcheck/results.json", "blocksuspects/results.json"):
         pth = HERE / f
