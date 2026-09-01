@@ -1,7 +1,8 @@
 # ig-unfollow-checker
 
 Analyse your Instagram relationships from your own data — who never followed
-you back, who left and when, who blocked you, and which accounts are dead.
+you back, who left and roughly when, who most likely blocked you, and which
+accounts are dead.
 
 **No login. No password. No third-party service.** Your data never leaves your
 machine.
@@ -48,16 +49,20 @@ safe half, run `analysis/` and never run this.
 
 ## Setup
 
+The export analysis needs **nothing installed** beyond Python — it is a file
+parser. Playwright is only for the profile checker:
+
 ```bash
-pip install playwright        # only needed for the profile checker
-python -m playwright install chromium
 cp snapshots.example.json snapshots.json   # then edit it
+
+pip install playwright                     # profile checker only
+python -m playwright install chromium      # profile checker only
 ```
 
 `snapshots.json` holds the paths to your own exports. It is gitignored and must
 stay that way — it identifies you.
 
-### 1. Download your Instagram data (HTML format)
+### Download your Instagram data (HTML format)
 
 You need the official data export from Instagram. Here's how:
 
@@ -104,23 +109,9 @@ You need the official data export from Instagram. Here's how:
 
 > **Official help page:** [help.instagram.com/181231772500920](https://help.instagram.com/181231772500920)
 
-### 2. (Recommended) Turn on a VPN
+## Using the export analysis
 
-Using a VPN is **strongly recommended** to protect your IP address. Instagram may rate-limit IPs that make too many requests. A VPN means only the VPN's IP gets throttled, not yours.
-
-**Free VPN options:**
-
-| VPN | Data limit | Link |
-|-----|-----------|------|
-| **ProtonVPN Free** | Unlimited | [protonvpn.com/free-vpn](https://protonvpn.com/free-vpn) |
-| **Windscribe Free** | 10 GB/month | [windscribe.com](https://windscribe.com) |
-| **Cloudflare WARP (1.1.1.1)** | Unlimited | [1.1.1.1](https://one.one.one.one) |
-
-ProtonVPN Free is the best option — unlimited data, no-logs policy, and easy to switch servers when rate-limited. Just install the app, connect, and run the script.
-
-> **Note:** Tor does NOT work. Instagram blocks all Tor exit nodes.
-
-### 3. Analyse — no network
+No network, no login, no account contact.
 
 Run step one first — everything else reads what it writes:
 
@@ -150,7 +141,27 @@ Two exports are enough for a timeline; more is better. Export monthly and keep
 the zips — the resolution of every "when did they leave" answer is the gap
 between your snapshots.
 
-### 4. Check which accounts still exist — network, use a VPN
+## Using the profile checker
+
+This part visits Instagram. Read the risk note above first.
+
+### Turn on a VPN first
+
+Using a VPN is **strongly recommended** to protect your IP address. Instagram may rate-limit IPs that make too many requests. A VPN means only the VPN's IP gets throttled, not yours.
+
+**Free VPN options:**
+
+| VPN | Data limit | Link |
+|-----|-----------|------|
+| **ProtonVPN Free** | Unlimited | [protonvpn.com/free-vpn](https://protonvpn.com/free-vpn) |
+| **Windscribe Free** | 10 GB/month | [windscribe.com](https://windscribe.com) |
+| **Cloudflare WARP (1.1.1.1)** | Unlimited | [1.1.1.1](https://one.one.one.one) |
+
+ProtonVPN Free is the best option — unlimited data, no-logs policy, and easy to switch servers when rate-limited. Just install the app, connect, and run the script.
+
+> **Note:** Tor does NOT work. Instagram blocks all Tor exit nodes.
+
+### Run it
 
 ```bash
 python3 ig_unfollow_checker.py your-export.zip --analyze-only   # no network
