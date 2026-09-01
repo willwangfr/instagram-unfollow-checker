@@ -199,34 +199,175 @@ def _clean_bio_lines(lines: list[str], username: str) -> list[str]:
     return out
 
 
+def extract_og_counts(page) -> dict:
+    """Counts from the og:description meta tag.
+
+    The logged-out header renders followers and following but omits the post
+    count entirely; the meta tag carries all three, so it is the only
+    anonymous source for "has this account ever posted".
+    """
+    out = {}
+    try:
+        content = page.locator('meta[property="og:description"]').first.get_attribute(
+            "content", timeout=3000)
+    except Exception:
+        return out
+    if not isinstance(content, str):
+        return out
+    for pattern, key in ((r"([\d.,]+[KMB]?)\s+Followers", "followers"),
+                         (r"([\d.,]+[KMB]?)\s+Following", "following"),
+                         (r"([\d.,]+[KMB]?)\s+Posts?", "posts")):
+        m = re.search(pattern, content, re.I)
+        if m:
+            out[key] = m.group(1)
+    return out
+
+
+def name_from_title(title: str, username: str):
+    """Display name from the page title.
+
+    The title carries it even when the header fails to render, so it is a free
+    fallback. Instagram wraps names containing right-to-left script in
+    directional marks, which are invisible but not whitespace.
+    """
+    if not isinstance(title, str):
+        return None
+    m = re.match(r"^(.*?)\s*\(@" + re.escape(username) + r"\)", title, re.I)
+    if not m:
+        return None
+    return m.group(1).strip().strip("\u200e\u200f").strip() or None
+
+
+PROFILE_JS = """(expand) => {
+    const q = s => Array.from(document.querySelectorAll(s));
+    const header = document.querySelector('header');
+    // Long bios are collapsed behind a "more" control; without expanding it the
+    // captured bio is silently truncated mid-sentence.
+    let hasMore = false;
+    if (header) {
+        for (const el of Array.from(header.querySelectorAll('span,div,button'))) {
+            if (el.innerText && el.innerText.trim() === 'more' && el.offsetParent) {
+                hasMore = true;
+                if (expand) el.click();
+                break;
+            }
+        }
+    }
+    const highlights = q('main img[alt]')
+        .filter(i => (i.getAttribute('alt') || '').includes('highlight story'))
+        .map(i => {
+            let n = i.closest('li') || i.parentElement;
+            for (let k = 0; k < 5 && n; k++) {
+                const t = (n.innerText || '').trim();
+                if (t && t.length < 40 && t.indexOf(String.fromCharCode(10)) < 0) return t;
+                n = n.parentElement;
+            }
+            return null;
+        }).filter(Boolean);
+    // Bio links are wrapped in an l.instagram.com redirect whose ?u= parameter
+    // holds the real destination; the visible text is truncated.
+    const external = [...new Set(q('header a[href]')
+        .map(a => a.getAttribute('href') || '')
+        .filter(h => h.includes('l.instagram.com'))
+        .map(h => { try { return decodeURIComponent(new URL(h, location.href)
+                        .searchParams.get('u') || ''); } catch (e) { return ''; } })
+        .filter(Boolean))];
+    const threads = (q('header a[href*="threads.com/@"], header a[href*="threads.net/@"]')
+        .map(a => (a.getAttribute('href') || '').match(/threads\\.(?:com|net)\\/@([A-Za-z0-9_.]+)/))
+        .filter(Boolean).map(m => m[1]))[0] || null;
+    const shortcodes = [...new Set(q('a[href*="/p/"], a[href*="/reel/"]')
+        .map(a => (a.getAttribute('href') || '').match(/\\/(?:p|reel)\\/([^/]+)/))
+        .filter(Boolean).map(m => m[1]))];
+    const pic = q('meta[property="og:image"]')[0];
+    return {
+        header_text: header ? header.innerText : '',
+        highlight_titles: highlights,
+        external_links: external,
+        threads_handle: threads,
+        verified: q('svg[aria-label="Verified"]').length > 0,
+        profile_pic: pic ? pic.getAttribute('content') : null,
+        recent_shortcodes: shortcodes.slice(0, 12),
+        has_location_tag: q('a[href*="/explore/locations/"]').length > 0,
+        has_more: hasMore,
+    };
+}"""
+
+
 def extract_bio(page, username: str) -> dict:
     """Best-effort display name, bio text, link and counts from a loaded page."""
     info = {"full_name": None, "bio": None, "external_link": None,
-            "followers": None, "following": None}
+            "followers": None, "following": None, "posts": None,
+            "verified": None, "profile_pic": None, "highlight_count": None,
+            "highlight_titles": None, "threads_handle": None,
+            "recent_shortcodes": None, "has_location_tag": None}
+    info.update(extract_og_counts(page))
     try:
-        header = page.locator("header").first.inner_text(timeout=4000)
+        d = page.evaluate(PROFILE_JS, False)
+        # Instagram collapses long bios behind a "more" control. Expanding costs
+        # a click and a re-read, so only profiles that actually have one pay it.
+        if isinstance(d, dict) and d.get("has_more"):
+            page.evaluate(PROFILE_JS, True)
+            page.wait_for_timeout(350)
+            expanded = page.evaluate(PROFILE_JS, False)
+            if isinstance(expanded, dict) and len(
+                    expanded.get("header_text") or "") > len(d.get("header_text") or ""):
+                d = expanded
     except Exception:
-        return info
-    lines = [l for l in header.splitlines()]
-    for l in lines:
-        m = re.match(r"^([\d.,]+[KMB]?)\s+followers?$", l.strip(), re.I)
-        if m:
-            info["followers"] = m.group(1)
-        m = re.match(r"^([\d.,]+[KMB]?)\s+following$", l.strip(), re.I)
-        if m:
-            info["following"] = m.group(1)
-    body = _clean_bio_lines(lines, username)
-    if body:
-        # First surviving line is the display name; the rest is the bio.
-        info["full_name"] = body[0]
-        rest = [l for l in body[1:] if not l.startswith("www.")
-                and not re.match(r"^https?://", l)]
-        links = [l for l in body[1:] if l.startswith("www.")
-                 or re.match(r"^https?://", l)]
-        if rest:
-            info["bio"] = "\n".join(rest)
-        if links:
-            info["external_link"] = links[0]
+        d = {}
+    if not isinstance(d, dict):
+        d = {}
+
+    info["highlight_titles"] = d.get("highlight_titles") or []
+    info["highlight_count"] = len(info["highlight_titles"])
+    info["threads_handle"] = d.get("threads_handle")
+    info["verified"] = d.get("verified")
+    info["profile_pic"] = d.get("profile_pic")
+    info["recent_shortcodes"] = d.get("recent_shortcodes")
+    info["has_location_tag"] = d.get("has_location_tag")
+    links = d.get("external_links") or []
+    if links:
+        info["external_link"] = links[0]
+        if len(links) > 1:
+            info["external_links_all"] = links
+
+    header = d.get("header_text") or ""
+    if not header:
+        try:
+            header = page.locator("header").first.inner_text(timeout=4000)
+        except Exception:
+            header = ""
+    if isinstance(header, str) and header:
+        lines = header.splitlines()
+        # og:description is the primary source for counts; the header still
+        # carries followers and following if that tag is missing.
+        for l in lines:
+            for pat, key in ((r"^([\d.,]+[KMB]?)\s+followers?$", "followers"),
+                             (r"^([\d.,]+[KMB]?)\s+following$", "following"),
+                             (r"^([\d.,]+[KMB]?)\s+posts?$", "posts")):
+                m = re.match(pat, l.strip(), re.I)
+                if m and not info.get(key):
+                    info[key] = m.group(1)
+        # Highlight titles render after the bio inside the same header; without
+        # dropping them they were captured as extra bio lines.
+        drop = {t.lower() for t in info["highlight_titles"]} | {"more", "highlights"}
+        body = [l for l in _clean_bio_lines(lines, username)
+                if l.strip().lower() not in drop]
+        if body:
+            info["full_name"] = body[0]
+            rest = [l for l in body[1:] if not l.startswith("www.")
+                    and not re.match(r"^https?://", l)]
+            if rest:
+                info["bio"] = "\n".join(rest)
+            if not info["external_link"]:
+                lk = [l for l in body[1:]
+                      if l.startswith("www.") or re.match(r"^https?://", l)]
+                if lk:
+                    info["external_link"] = lk[0]
+    if not info["full_name"]:
+        try:
+            info["full_name"] = name_from_title(page.title(), username)
+        except Exception:
+            pass
     return info
 
 
@@ -235,6 +376,12 @@ def extract_bio(page, username: str) -> dict:
 # action attributable to the account. Public bios do not need any of them, so
 # their presence is a bug to abort on rather than a convenience to exploit.
 AUTH_COOKIES = {"sessionid", "ds_user_id", "csrftoken", "ig_did", "shbid"}
+
+# "This Account is Private" was the wording this checker was written against.
+# Instagram now serves "This profile is private", which silently turned every
+# private account into a plain EXISTS.
+PRIVATE_MARKERS = ("This profile is private", "This Account is Private",
+                   "This account is private", "This Profile is Private")
 
 
 def assert_logged_out(context) -> None:
@@ -266,13 +413,22 @@ def check_account(page, username: str) -> dict:
         if "Profile isn't available" in title or "Page Not Found" in title:
             return {"username": username, "status": "NOT_FOUND", "title": title}
 
-        if f"(@{username})" in title or "Instagram photos and videos" in title:
-            return {"username": username, "status": "EXISTS", "title": title,
-                    **extract_bio(page, username)}
+        # Private profiles serve the same title as public ones, so privacy has
+        # to be read from the body. Instagram's wording has drifted over time;
+        # match every form rather than the one that happened to be current.
+        body_text = ""
+        try:
+            body_text = page.locator("body").inner_text(timeout=4000)[:1500]
+        except Exception:
+            pass
+        private = any(m in body_text for m in PRIVATE_MARKERS)
 
-        body_text = page.locator("body").inner_text()[:1000]
-        if "This Account is Private" in body_text or "This account is private" in body_text:
-            # A private account still shows name, bio and counts in the header.
+        if f"(@{username})" in title or "Instagram photos and videos" in title:
+            return {"username": username,
+                    "status": "EXISTS_PRIVATE" if private else "EXISTS",
+                    "title": title, **extract_bio(page, username)}
+
+        if private:
             return {"username": username, "status": "EXISTS_PRIVATE", "title": title,
                     **extract_bio(page, username)}
 
@@ -359,7 +515,9 @@ def write_bios(results: list[dict], bios_path: Path) -> int:
     """Write everyone whose bio we have, so a partial run is still useful."""
     rows = [{k: r.get(k) for k in
              ("username", "status", "full_name", "bio", "external_link",
-              "followers", "following")}
+              "followers", "following", "posts", "verified", "profile_pic",
+              "highlight_count", "highlight_titles", "threads_handle",
+              "recent_shortcodes", "has_location_tag")}
             for r in results if r.get("full_name") or r.get("bio")]
     tmp = bios_path.with_suffix(".tmp")
     tmp.write_text(json.dumps(

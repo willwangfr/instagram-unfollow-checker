@@ -28,6 +28,8 @@ from ig_unfollow_checker import (
     diff_exports,
     check_account,
     extract_bio,
+    extract_og_counts,
+    name_from_title,
     usernames_from_export_html,
     assert_logged_out,
     load_checkpoint,
@@ -93,9 +95,18 @@ def make_ig_zip(tmp_path):
 
 @pytest.fixture
 def mock_page():
-    """Create a mock Playwright page object."""
+    """Create a mock Playwright page object.
+
+    evaluate() returns a real dict: extract_bio reads the profile through one
+    evaluate call, and a MagicMock there silently skips every field.
+    """
     page = MagicMock()
     page.wait_for_timeout = MagicMock()
+    page.evaluate.return_value = {
+        "header_text": "", "highlight_titles": [], "external_links": [],
+        "threads_handle": None, "verified": False, "profile_pic": None,
+        "recent_shortcodes": [], "has_location_tag": False,
+    }
     return page
 
 
@@ -691,14 +702,21 @@ class TestSmoke:
 # ---------------------------------------------------------------------------
 
 
-def _header(text):
-    """A mock page whose <header> yields this text."""
+def _header(text, **extra):
+    """A mock page whose profile probe yields this header text."""
     page = MagicMock()
     loc = MagicMock()
     first = MagicMock()
     first.inner_text.return_value = text
+    first.get_attribute.return_value = None
     loc.first = first
     page.locator.return_value = loc
+    payload = {"header_text": text, "highlight_titles": [], "external_links": [],
+               "threads_handle": None, "verified": False, "profile_pic": None,
+               "recent_shortcodes": [], "has_location_tag": False}
+    payload.update(extra)
+    page.evaluate.return_value = payload
+    page.title.return_value = ""
     return page
 
 
@@ -738,9 +756,71 @@ class TestExtractBio:
     def test_a_header_that_will_not_load_returns_empty_not_raise(self):
         page = MagicMock()
         page.locator.side_effect = Exception("detached")
+        page.evaluate.side_effect = Exception("detached")
+        page.title.side_effect = Exception("detached")
         got = extract_bio(page, "whoever")
-        assert got == {"full_name": None, "bio": None, "external_link": None,
-                       "followers": None, "following": None}
+        assert got["full_name"] is None and got["bio"] is None
+        assert got["followers"] is None and got["posts"] is None
+        assert got["highlight_count"] == 0
+
+    def test_highlight_titles_are_not_captured_as_bio_lines(self):
+        page = _header(
+            "anise\n5,208 followers\n478 following\nAnise Health\n"
+            "A mental health platform\nCommunity\nIn The News\nFAQ",
+            highlight_titles=["Community", "In The News", "FAQ"])
+        got = extract_bio(page, "anise")
+        assert got["full_name"] == "Anise Health"
+        assert got["bio"] == "A mental health platform"
+        assert got["highlight_count"] == 3
+
+    def test_the_more_button_text_is_not_part_of_the_bio(self):
+        page = _header("x\n5 followers\n5 following\nX Person\nline one\nmore")
+        assert extract_bio(page, "x")["bio"] == "line one"
+
+    def test_external_link_is_the_unwrapped_destination(self):
+        page = _header("x\n5 followers\n5 following\nX\nbio",
+                       external_links=["https://linktr.ee/real"])
+        assert extract_bio(page, "x")["external_link"] == "https://linktr.ee/real"
+
+    def test_threads_handle_is_captured(self):
+        page = _header("x\n5 followers\n5 following\nX\nbio",
+                       threads_handle="xhandle")
+        assert extract_bio(page, "x")["threads_handle"] == "xhandle"
+
+
+def _og(content):
+    """A mock page whose og:description meta tag carries this content."""
+    page = MagicMock()
+    loc = MagicMock()
+    first = MagicMock()
+    first.get_attribute.return_value = content
+    loc.first = first
+    page.locator.return_value = loc
+    return page
+
+
+class TestExtractOgCounts:
+    def test_reads_all_three_counts(self):
+        got = extract_og_counts(_og(
+            "104M Followers, 95 Following, 4,902 Posts - See Instagram photos "
+            "and videos from NASA (@nasa)"))
+        assert got == {"followers": "104M", "following": "95", "posts": "4,902"}
+
+    def test_a_single_post_is_still_a_count(self):
+        got = extract_og_counts(_og("3 Followers, 1 Following, 1 Post - x (@x)"))
+        assert got["posts"] == "1"
+
+    def test_zero_posts_is_captured_not_dropped(self):
+        got = extract_og_counts(_og("0 Followers, 2 Following, 0 Posts - x (@x)"))
+        assert got["posts"] == "0"
+
+    def test_a_missing_tag_is_empty_not_an_error(self):
+        page = MagicMock()
+        page.locator.side_effect = Exception("no such element")
+        assert extract_og_counts(page) == {}
+
+    def test_a_non_string_attribute_is_treated_as_absent(self):
+        assert extract_og_counts(_og(None)) == {}
 
 
 class TestUsernamesFromExportHtml:
@@ -770,6 +850,26 @@ class TestUsernamesFromExportHtml:
     def test_a_page_with_neither_layout_is_empty_not_an_error(self):
         assert usernames_from_export_html("<html><body>nothing</body></html>") == []
 
+
+class TestNameFromTitle:
+    def test_pulls_the_name_before_the_handle(self):
+        assert name_from_title(
+            "NASA (@nasa) • Instagram photos and videos", "nasa") == "NASA"
+
+    def test_a_title_with_no_name_is_none(self):
+        assert name_from_title(
+            "(@fluffyhugs) • Instagram photos and videos", "fluffyhugs") is None
+
+    def test_directional_marks_are_stripped(self):
+        assert name_from_title(
+            "\u200eTalha | \u0637\u0644\u062d\u06c1\u200e (@_talha__rao_) • Instagram",
+            "_talha__rao_") == "Talha | \u0637\u0644\u062d\u06c1"
+
+    def test_a_mismatched_handle_does_not_match(self):
+        assert name_from_title("Someone (@other) • Instagram", "nasa") is None
+
+    def test_a_non_string_title_is_none(self):
+        assert name_from_title(None, "nasa") is None
 
 
 class TestBioDoesNotChangeVerdict:
