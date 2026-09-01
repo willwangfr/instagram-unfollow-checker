@@ -9,8 +9,12 @@ person arrived and when they left, which is the only way to date an unfollow
 import argparse
 import json
 import re
+import sys
 import zipfile
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+import igpaths
 
 TABLE_USER_RE = re.compile(
     r'<td[^>]*>Username</td>\s*<td[^>]*>([A-Za-z0-9_.]+)</td>', re.I)
@@ -53,6 +57,63 @@ def load_snapshot(zip_path):
     return following, followers
 
 
+# Every follower and following entry carries the moment the follow happened,
+# rendered next to the link. Nothing downstream can date a relationship without
+# it, so this is step one of the pipeline.
+_DATED = re.compile(
+    r'href="https://www\.instagram\.com/(?:_u/)?([A-Za-z0-9_.]+)"[^>]*>.*?'
+    r'</a></div>\s*<div>([^<]+)</div>', re.S)
+
+
+def follow_dates_from_zip(zip_path):
+    """{"following": {user: iso}, "followers": {user: iso}} from one export."""
+    import datetime as _dt
+    out = {}
+    with zipfile.ZipFile(zip_path) as z:
+        names = z.namelist()
+        for key, suffix in (("following", "following.html"),
+                            ("followers", "followers_1.html")):
+            n = next((x for x in names if x.endswith(suffix)
+                      and "followers_and_following" in x), None)
+            got = {}
+            if n:
+                for u, t in _DATED.findall(z.read(n).decode("utf-8", "replace")):
+                    try:
+                        got[u] = _dt.datetime.strptime(
+                            t.strip(), "%b %d, %Y %I:%M %p").isoformat()
+                    except ValueError:
+                        pass
+            out[key] = got
+    return out
+
+
+def handle_continuity(snaps, dates, follow_dates):
+    """Has each handle been continuously present since you followed it?
+
+    A rename makes someone vanish from your following list and reappear under a
+    new handle, which is indistinguishable from an unfollow unless you ask this
+    question. Asking "present in every snapshot" instead is wrong: it fails
+    anyone you simply started following later.
+    """
+    import datetime as _dt
+    snap_at = {d: _dt.datetime.strptime(d, "%Y-%m-%d") for d in dates}
+    out = {}
+    for u in sorted(snaps[dates[-1]][0]):
+        iso = follow_dates.get(u)
+        if not iso:
+            out[u] = "unknown_follow_date"
+            continue
+        since = _dt.datetime.fromisoformat(iso)
+        expected = [d for d in dates if snap_at[d] >= since]
+        if not expected:
+            out[u] = "followed_after_last_snapshot"
+        elif all(u in snaps[d][0] for d in expected):
+            out[u] = "continuous"
+        else:
+            out[u] = "gap"
+    return out
+
+
 def load_unfollow_log(zip_path):
     """Instagram's own record of accounts YOU unfollowed: {username: timestamp}."""
     pat = re.compile(
@@ -67,19 +128,30 @@ def load_unfollow_log(zip_path):
 
 
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("snapshots", nargs="+", help="date=path pairs, oldest first")
-    ap.add_argument("--output-dir", default=".")
+    ap = argparse.ArgumentParser(
+        description="Step 1: read the exports and write what every other "
+                    "script here depends on.")
+    ap.add_argument("snapshots", nargs="*",
+                    help="date=path pairs, oldest first (default: from --config)")
+    ap.add_argument("--output-dir", help="default: work_dir from the config")
+    igpaths.add_config_arg(ap)
     args = ap.parse_args()
 
-    out = Path(args.output_dir)
+    if args.snapshots:
+        dates, paths = [], []
+        for s in args.snapshots:
+            d, p = s.split("=", 1)
+            dates.append(d)
+            paths.append(p)
+        out = Path(args.output_dir or ".")
+    else:
+        cfg = igpaths.load(args.config)
+        if not cfg.snapshots:
+            raise SystemExit("Your config lists no snapshots. Add at least one.")
+        dates = [d for d, _ in cfg.snapshots]
+        paths = [str(z) for _, z in cfg.snapshots]
+        out = Path(args.output_dir) if args.output_dir else cfg.work_dir
     out.mkdir(parents=True, exist_ok=True)
-
-    dates, paths = [], []
-    for s in args.snapshots:
-        d, p = s.split("=", 1)
-        dates.append(d)
-        paths.append(p)
 
     snaps = {}
     for d, p in zip(dates, paths):
@@ -120,6 +192,23 @@ def main():
             if u in log:
                 continue
             block_candidates.setdefault(u, []).append(f"{older} .. {newer}")
+
+    fd = follow_dates_from_zip(paths[-1])
+    (out / "follow_dates.json").write_text(json.dumps(fd, indent=2))
+    cont = handle_continuity(snaps, dates, fd["following"])
+    (out / "continuity_v2.json").write_text(json.dumps(
+        {"snapshots": dates, "continuity": cont,
+         "ever_followed": {u: any(u in snaps[d][1] for d in dates)
+                           for u in sorted(new_fo - new_fl)}}, indent=2))
+    stable = sorted(set.intersection(*[snaps[d][0] for d in dates])) if len(dates) > 1 \
+        else sorted(snaps[dates[0]][0])
+    (out / "handle_stability.json").write_text(json.dumps(
+        {"snapshots": dates, "stable_handles": stable}, indent=2))
+    print(f"  follow dates: {len(fd['following'])} following, "
+          f"{len(fd['followers'])} followers")
+    print(f"  handle continuity: "
+          f"{sum(1 for v in cont.values() if v == 'continuous')} continuous, "
+          f"{sum(1 for v in cont.values() if v == 'gap')} renamed")
 
     (out / "follow_timeline.json").write_text(json.dumps(
         {"snapshots": dates,

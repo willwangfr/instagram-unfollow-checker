@@ -65,7 +65,7 @@ def main():
     following, followers = load_snapshot(cfg.latest_zip)
     v2 = json.loads((HERE / "continuity_v2.json").read_text())
     cont, everf = v2["continuity"], v2["ever_followed"]
-    tl = json.loads((HERE / "extended/follow_timeline.json").read_text())["not_following_back"]
+    tl = json.loads((HERE / "follow_timeline.json").read_text())["not_following_back"]
     ghost = {r["username"]: r["tier"]
              for r in csv.DictReader((HERE / "ghosts/ghost_profiles.csv").open())}
     stable = set(json.loads((HERE / "handle_stability.json").read_text())["stable_handles"])

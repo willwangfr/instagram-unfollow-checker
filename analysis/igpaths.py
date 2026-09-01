@@ -37,6 +37,16 @@ class Config:
         self.me = [h.lower() for h in data.get("me", [])]
         self.work_dir = resolve(data.get("work_dir", "."))
 
+        missing = [str(z) for _, z in self.snapshots if not z.exists()]
+        if not self.latest_zip.exists():
+            missing.insert(0, str(self.latest_zip))
+        if missing:
+            raise SystemExit(
+                "These export files from your config do not exist:\n  "
+                + "\n  ".join(missing)
+                + f"\n\nEdit {config_path} to point at your own exports "
+                  "(the example file ships with placeholder paths).")
+
     @property
     def connections_dir(self):
         if not self.latest_dir:
