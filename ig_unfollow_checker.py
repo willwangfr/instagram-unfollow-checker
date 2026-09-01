@@ -94,6 +94,24 @@ def extract_usernames_from_zip(zip_path: str) -> tuple[set, set]:
     return following, followers
 
 
+# Followers and following are rendered as anchors, but every other list in the
+# export (pending requests, recent unfollows, close friends) is a borderless
+# table with no links at all. Matching only on anchors silently returned an
+# empty list for all of them.
+_TABLE_USER_RE = re.compile(
+    r'<td[^>]*>Username</td>\s*<td[^>]*>([A-Za-z0-9_.]+)</td>', re.I)
+
+
+def usernames_from_export_html(html: str) -> list[str]:
+    """Usernames from an export page, in either the anchor or table layout."""
+    users = re.findall(r'href="https://www\.instagram\.com/_u/([a-zA-Z0-9_.]+)"', html)
+    if not users:
+        users = re.findall(r'href="https://www\.instagram\.com/([a-zA-Z0-9_.]+)"', html)
+    if not users:
+        users = _TABLE_USER_RE.findall(html)
+    return users
+
+
 def extract_extra_lists_from_zip(zip_path: str) -> dict[str, list[str]]:
     """Extract additional lists from the export: pending requests, recent unfollows, etc."""
     extras = {}
@@ -105,6 +123,8 @@ def extract_extra_lists_from_zip(zip_path: str) -> dict[str, list[str]]:
             "recent_follow_requests": "Recent Follow Requests (you sent)",
             "recently_unfollowed_profiles": "Recently Unfollowed by You",
             "follow_requests_you've_received": "Follow Requests You've Received",
+            "blocked_profiles": "Blocked by You",
+            "restricted_profiles": "Restricted by You",
         }
 
         for filename_part, label in mapping.items():
@@ -112,10 +132,7 @@ def extract_extra_lists_from_zip(zip_path: str) -> dict[str, list[str]]:
             if match:
                 with z.open(match) as f:
                     html = f.read().decode('utf-8')
-                # Try both URL formats — anchored to href context
-                users = re.findall(r'href="https://www\.instagram\.com/_u/([a-zA-Z0-9_.]+)"', html)
-                if not users:
-                    users = re.findall(r'href="https://www\.instagram\.com/([a-zA-Z0-9_.]+)"', html)
+                users = usernames_from_export_html(html)
                 if users:
                     extras[label] = sorted(set(users))
 

@@ -28,6 +28,7 @@ from ig_unfollow_checker import (
     diff_exports,
     check_account,
     extract_bio,
+    usernames_from_export_html,
     assert_logged_out,
     load_checkpoint,
     write_bios,
@@ -740,6 +741,35 @@ class TestExtractBio:
         got = extract_bio(page, "whoever")
         assert got == {"full_name": None, "bio": None, "external_link": None,
                        "followers": None, "following": None}
+
+
+class TestUsernamesFromExportHtml:
+    """Followers/following use anchors; every other export page uses a table."""
+
+    def test_reads_the_underscore_u_anchor_layout(self):
+        html = ('<a href="https://www.instagram.com/_u/alice">alice</a>'
+                '<a href="https://www.instagram.com/_u/bob">bob</a>')
+        assert usernames_from_export_html(html) == ["alice", "bob"]
+
+    def test_reads_the_plain_anchor_layout(self):
+        html = '<a href="https://www.instagram.com/carol">carol</a>'
+        assert usernames_from_export_html(html) == ["carol"]
+
+    def test_reads_the_linkless_table_layout(self):
+        html = ('<table><tr><td class="_a6_q">Name</td>'
+                '<td class="_2piu _a6_r">izzy c</td></tr>'
+                '<tr><td class="_a6_q">Username</td>'
+                '<td class="_2piu _a6_r">_izzyco_</td></tr></table>')
+        assert usernames_from_export_html(html) == ["_izzyco_"]
+
+    def test_the_name_cell_is_not_mistaken_for_a_username(self):
+        html = ('<td class="_a6_q">Name</td><td class="_2piu _a6_r">Some Person</td>'
+                '<td class="_a6_q">Username</td><td class="_2piu _a6_r">someperson</td>')
+        assert usernames_from_export_html(html) == ["someperson"]
+
+    def test_a_page_with_neither_layout_is_empty_not_an_error(self):
+        assert usernames_from_export_html("<html><body>nothing</body></html>") == []
+
 
 
 class TestBioDoesNotChangeVerdict:
