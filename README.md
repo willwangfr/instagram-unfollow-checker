@@ -7,6 +7,17 @@ accounts are dead.
 **No login. No password. No third-party service.** Your data never leaves your
 machine.
 
+Most Instagram follower apps want your login. That is the whole business model,
+and it is why several have been caught harvesting credentials. This one reads
+the data export Meta is legally obliged to give you, and never asks for a
+password — it refuses to run at all if it finds a session cookie.
+
+The thing it does that most do not: **it tells renames apart from unfollows.**
+A handle change looks exactly like an unfollow when you diff two exports. On
+the account this was built against, 42% of apparent unfollowers had simply
+changed their username — every one a false accusation in a tool that does not
+check.
+
 ## What you get
 
 From your export alone, with no login and nothing installed but Python:
