@@ -33,3 +33,36 @@ Thumbs.db
 # Virtual env
 .venv/
 venv/
+
+# personal export locations — never commit these
+snapshots.json
+
+# ---------------------------------------------------------------------------
+# NEVER COMMIT PERSONAL INSTAGRAM DATA. This repo is public.
+# Followers, following, DMs, bios and anything derived from an export stay
+# local. Config pointing at your own files stays local too.
+# ---------------------------------------------------------------------------
+snapshots.json
+*.zip
+instagram-*/
+results*.json
+bios*.json
+dm_index.*
+everyone.*
+follow_dates.json
+follow_timeline.json
+handle_*.json
+continuity*.json
+gap_patterns.json
+ig_graph_master.*
+not_following_back*
+ghost_profiles.*
+unfollow_shortlist.html
+all_lists.html
+dropped_you_with_dates.json
+block_*.txt
+lists/
+ghosts/
+fullgraph/
+*.csv
+run*.log

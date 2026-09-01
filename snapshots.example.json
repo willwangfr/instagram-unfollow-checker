@@ -1,0 +1,11 @@
+{
+  "_comment": "Copy to snapshots.json and edit. snapshots.json is gitignored.",
+  "latest_zip": "~/Downloads/instagram-yourname-2026-08-31-ABC123.zip",
+  "latest_dir": "~/Downloads/instagram-yourname-2026-08-31-ABC123",
+  "work_dir": "~/Documents/ig-analysis",
+  "me": ["your name", "yourhandle", "an_older_handle"],
+  "snapshots": [
+    {"date": "2026-02-10", "zip": "~/Downloads/instagram-yourname-2026-02-10-XXX.zip"},
+    {"date": "2026-08-31", "zip": "~/Downloads/instagram-yourname-2026-08-31-ABC123.zip"}
+  ]
+}
