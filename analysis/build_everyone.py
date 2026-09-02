@@ -66,6 +66,7 @@ def main():
     if gp.exists():
         ghost = {r["username"]: r["tier"] for r in csv.DictReader(gp.open())}
 
+    group_co = {}
     dm = {}
     dmp = HERE / "dm_index.json"
     if dmp.exists():
@@ -75,6 +76,24 @@ def main():
                 if not cur or d["messages"] > cur["messages"]:
                     dm[d["matched_username"]] = d
 
+    # Two people in the same group chat are connected to each other, which is
+    # the closest thing to Instagram's "mutual connections" that can be had
+    # without logging in — the export describes only your own graph, and a
+    # logged-out profile page shows no follower list at all.
+    #
+    # Group threads name participants by display name, so they have to be
+    # resolved back to usernames. The dictionary is built from one-to-one
+    # threads (which pair a display name with a resolved username) and from
+    # every display name already known for an account. Coverage is partial and
+    # improves as more profiles are checked.
+    if dmp.exists():
+        threads = json.loads(dmp.read_text())
+        name_to_user = {}
+        for d in threads:
+            ps = [x for x in d["participants"].split(" | ") if x]
+            if len(ps) == 1 and d["matched_username"]:
+                name_to_user.setdefault(ps[0].strip().lower(), d["matched_username"])
+
     names = {}
     for fn in sorted(os.listdir(cfg.connections_dir)):
         if fn.endswith(".html"):
@@ -82,6 +101,23 @@ def main():
                     Path(cfg.connections_dir, fn).read_text(encoding="utf-8")):
                 if nm.strip():
                     names.setdefault(u, nm.strip())
+
+    if dmp.exists():
+        for u, r in checks.items():
+            n = (r.get("full_name") or "").strip().lower()
+            if n:
+                name_to_user.setdefault(n, u)
+        for u, n in names.items():
+            if n.strip():
+                name_to_user.setdefault(n.strip().lower(), u)
+        for d in threads:
+            ps = [x for x in d["participants"].split(" | ") if x]
+            if len(ps) < 2:
+                continue
+            members = {name_to_user[x.strip().lower()] for x in ps
+                       if x.strip().lower() in name_to_user}
+            for a in members:
+                group_co.setdefault(a, set()).update(m for m in members if m != a)
 
     rows = []
     for u in graph:
@@ -153,6 +189,8 @@ def main():
             "dm_from_you": dm.get(u, {}).get("from_you", ""),
             "dm_from_them": dm.get(u, {}).get("from_them", ""),
             "dm_unanswered": (not dm[u]["you_spoke_last"]) if u in dm else "",
+            "group_connections": len(group_co.get(u, ())),
+            "group_connection_names": " | ".join(sorted(group_co.get(u, ()))[:20]),
         })
 
     cols = list(rows[0].keys())
@@ -171,7 +209,8 @@ def main():
              r["days_you_have_followed"] if r["days_you_have_followed"] != "" else None,
              r["left_between"], r["bio"][:160], bool(r["likely_spam"]),
              r["dm_messages"] if r["dm_messages"] != "" else None,
-             r["dm_last"] or None, bool(r["dm_unanswered"]) if r["dm_unanswered"] != "" else False]
+             r["dm_last"] or None, bool(r["dm_unanswered"]) if r["dm_unanswered"] != "" else False,
+             r["group_connections"] or None]
             for r in rows]
     (HERE / "everyone.html").write_text(PAGE.replace("__DATA__", json.dumps(slim, ensure_ascii=False)))
 
@@ -235,7 +274,7 @@ const DATA = __DATA__;
 // col: [label, index, type]
 const COLS = [["username",0,"s"],["name",3,"s"],["relationship",1,"s"],["verdict",2,"s"],
   ["posts",7,"n"],["followers",8,"n"],["following",9,"n"],["fo/fl ratio",10,"n"],
-  ["days followed",11,"n"],["DMs",15,"n"],["last DM",16,"s"],
+  ["days followed",11,"n"],["DMs",15,"n"],["last DM",16,"s"],["shared groups",18,"n"],
   ["you followed",4,"s"],["they followed",5,"s"],
   ["status",6,"s"],["left between",12,"s"],["bio",13,"s"]];
 let sortCol = 8, sortDir = -1;   // default: most followers first
@@ -292,6 +331,7 @@ function render(){
       +`<td class="n">${fmt(r[11])}</td>`
       +`<td class="n">${fmt(r[15])}</td>`
       +`<td class="meta">${esc(r[16])}${r[17]?' <span style="color:#ff9800">unanswered</span>':''}</td>`
+      +`<td class="n">${fmt(r[18])}</td>`
       +`<td class="meta">${esc(r[4])}</td><td class="meta">${esc(r[5])}</td>`
       +`<td class="meta">${st}</td><td class="meta">${esc(r[12])}</td>`
       +`<td class="bio">${esc(r[13])}</td></tr>`);});
