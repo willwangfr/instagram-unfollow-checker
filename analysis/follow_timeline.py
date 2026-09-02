@@ -117,17 +117,37 @@ def handle_continuity(snaps, dates, follow_dates):
     return out
 
 
+# Instagram has shipped two layouts for the dated-username pages. Exports up to
+# early 2026 use an anchor with the date beside it; later ones use a borderless
+# table with no links at all. The same account's February and August 2026
+# exports differ, so both have to be tried — matching only the newer shape
+# returned an empty log for older exports, which reads as "you never unfollowed
+# anyone" rather than "this page could not be parsed".
+_DATED_TABLE = re.compile(
+    r'<td[^>]*>Username</td>\s*<td[^>]*>([A-Za-z0-9_.]+)</td>.*?'
+    r'<div class="_3-94 _a6-o">([^<]*)</div>', re.S)
+_DATED_ANCHOR = re.compile(
+    r'href="https://www\.instagram\.com/(?:_u/)?([A-Za-z0-9_.]+)"[^>]*>.*?'
+    r'</a></div>\s*<div>([^<]+)</div>', re.S)
+
+
+def parse_dated_users(html: str) -> dict:
+    """Username -> timestamp string, from either export layout."""
+    for pat in (_DATED_ANCHOR, _DATED_TABLE):
+        found = dict(pat.findall(html))
+        if found:
+            return found
+    return {}
+
+
 def load_unfollow_log(zip_path):
     """Instagram's own record of accounts YOU unfollowed: {username: timestamp}."""
-    pat = re.compile(
-        r'<td[^>]*>Username</td>\s*<td[^>]*>([A-Za-z0-9_.]+)</td>.*?'
-        r'<div class="_3-94 _a6-o">([^<]*)</div>', re.S)
     with zipfile.ZipFile(zip_path) as z:
         n = next((x for x in z.namelist()
                   if 'recently_unfollowed_profiles' in x and x.endswith('.html')), None)
         if not n:
             return {}
-        return dict(pat.findall(z.read(n).decode('utf-8')))
+        return parse_dated_users(z.read(n).decode('utf-8', 'replace'))
 
 
 def main():

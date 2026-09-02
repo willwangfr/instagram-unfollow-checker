@@ -872,6 +872,27 @@ class TestNameFromTitle:
         assert name_from_title(None, "nasa") is None
 
 
+class TestParseDatedUsers:
+    """Instagram has shipped two layouts for the dated-username pages."""
+
+    def test_reads_the_older_anchor_layout(self):
+        from analysis.follow_timeline import parse_dated_users
+        html = ('<div><div><a target="_blank" '
+                'href="https://www.instagram.com/s.nam02">s.nam02</a></div>'
+                '<div>Feb 09, 2026 2:25 pm</div></div>')
+        assert parse_dated_users(html) == {"s.nam02": "Feb 09, 2026 2:25 pm"}
+
+    def test_reads_the_newer_linkless_table_layout(self):
+        from analysis.follow_timeline import parse_dated_users
+        html = ('<td class="_a6_q">Username</td><td class="_2piu _a6_r">_izzyco_</td>'
+                '<div class="_3-94 _a6-o">Aug 30, 2026 6:53 pm</div>')
+        assert parse_dated_users(html) == {"_izzyco_": "Aug 30, 2026 6:53 pm"}
+
+    def test_a_page_in_neither_layout_is_empty_not_an_error(self):
+        from analysis.follow_timeline import parse_dated_users
+        assert parse_dated_users("<html><body>nothing</body></html>") == {}
+
+
 class TestBioDoesNotChangeVerdict:
     def test_exists_still_exists_and_gains_bio(self, mock_page):
         mock_page.title.return_value = "NASA (@nasa) • Instagram photos and videos"
