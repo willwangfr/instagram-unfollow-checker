@@ -71,9 +71,14 @@ network tab rather than something you have to take on trust.
 Drop two or more exports from different dates to unlock the timeline, rename
 detection and block detection.
 
-To run it locally: `python3 -m http.server --directory web` and open
-`http://localhost:8000`. It needs to be served rather than opened as a file,
-because browsers block ES modules on `file://`.
+**Just open `web/standalone.html`.** It is one self-contained file — double
+click it and it works, no server, no install, offline. Save it anywhere, put it
+on a stick, email it to someone.
+
+`web/index.html` is the same app split into modules for development. That one
+needs serving (`python3 -m http.server --directory web`), because browsers
+refuse to load ES modules over `file://`. Regenerate the single file after
+changing any module with `python3 web/build.py`.
 
 ## Two tools, and the difference matters
 
