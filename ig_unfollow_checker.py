@@ -675,7 +675,7 @@ def generate_html(accounts: list[str], title: str, subtitle: str, color: str, fi
     """Generate a clickable HTML file."""
     esc_title = html_mod.escape(title)
     esc_subtitle = html_mod.escape(subtitle)
-    html = f'''<html><head><title>{esc_title} ({len(accounts)})</title>
+    html = f'''<html><head><meta charset="utf-8"><title>{esc_title} ({len(accounts)})</title>
 <style>
 body{{font-family:monospace;font-size:14px;padding:20px;background:#111;color:#eee}}
 a{{color:{color};text-decoration:none}}
@@ -730,12 +730,12 @@ function updateStats() {
 '''
 
     html += '</body></html>'
-    Path(filename).write_text(html)
+    Path(filename).write_text(html, encoding="utf-8")
 
 
 def generate_summary_html(stats: dict, lists: dict, filename: str):
     """Generate a dashboard HTML with all lists and stats."""
-    html = '''<html><head><title>Instagram Analysis</title>
+    html = '''<html><head><meta charset="utf-8"><title>Instagram Analysis</title>
 <style>
 body{font-family:monospace;font-size:14px;padding:20px;background:#111;color:#eee;max-width:900px;margin:0 auto}
 h1{color:#4fc3f7;border-bottom:1px solid #333;padding-bottom:10px}
@@ -785,12 +785,32 @@ ul{padding-left:20px}li{padding:2px 0}
         html += '</ul></details>\n'
 
     html += '</body></html>'
-    Path(filename).write_text(html)
+    Path(filename).write_text(html, encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
+REPORT_DIRNAME = "ig-reports"
+
+
+def default_output_dir(input_path: str | None) -> Path:
+    """Pick where reports go when --output-dir isn't given.
+
+    Reports name real people, so they must never be written loose next to this
+    script -- a checkout of this repo is a normal place to run it from, and a
+    stray `git add -A` there would publish them. Reports land beside the export
+    they came from, or in the home directory if that would put them inside the
+    checkout.
+    """
+    base = Path(input_path).resolve().parent if input_path else Path.cwd().resolve()
+    tool_dir = Path(__file__).resolve().parent
+
+    if base == tool_dir or tool_dir in base.parents:
+        return Path.home() / "ig-unfollow-checker-reports"
+    return base / REPORT_DIRNAME
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -810,15 +830,23 @@ def main():
                              "decided and retrying errors/rate-limited entries")
     parser.add_argument("--limit", type=int,
                         help="Check at most N accounts this run (for a trial run)")
-    parser.add_argument("--output-dir", default=".", help="Output directory")
+    parser.add_argument("--output-dir", default=None,
+                        help=f"Where to write reports (default: {REPORT_DIRNAME}/ "
+                             "beside the export you point it at)")
     parser.add_argument("--show-browser", action="store_true")
     args = parser.parse_args()
 
     if not args.zipfile and not args.check_list and not args.diff:
         parser.error("Provide an Instagram export zip, --check-list <file>, or --diff <old> <new>")
 
-    out = Path(args.output_dir)
-    out.mkdir(exist_ok=True)
+    if args.output_dir:
+        out = Path(args.output_dir)
+    else:
+        source = args.zipfile or args.check_list or (args.diff[1] if args.diff else None)
+        out = default_output_dir(source)
+        print(f"Writing reports to {out}")
+        print("  (these list real usernames -- use --output-dir to put them elsewhere)\n")
+    out.mkdir(parents=True, exist_ok=True)
     results_path = out / "results.json"
     bios_path = out / "bios.json"
 

@@ -38,7 +38,10 @@ from ig_unfollow_checker import (
     Pacer,
     generate_html,
     generate_summary_html,
+    default_output_dir,
+    REPORT_DIRNAME,
 )
+import ig_unfollow_checker
 
 
 # ---------------------------------------------------------------------------
@@ -454,6 +457,89 @@ class TestGenerateSummaryHtml:
         outfile = str(tmp_path / "dashboard.html")
         generate_summary_html({}, {}, outfile)
         assert Path(outfile).exists()
+
+
+# ---------------------------------------------------------------------------
+# Unit Tests — output encoding
+# ---------------------------------------------------------------------------
+
+
+class TestOutputEncoding:
+    """Both generators emit an em dash. Without a declared charset a browser
+    falls back to latin-1 and renders it as 'â€"', even though Python reads
+    the file back fine -- so these assert the declaration, not just the bytes.
+    """
+
+    def test_report_declares_utf8(self, tmp_path):
+        outfile = str(tmp_path / "report.html")
+        generate_html(["alice"], "Title", "Subtitle", "#fff", outfile)
+
+        raw = Path(outfile).read_bytes()
+        assert b'<meta charset="utf-8">' in raw
+        head = raw.split(b"</title>")[0]
+        assert b"charset" in head, "charset must be declared before the title"
+        assert "—".encode("utf-8") in raw
+        raw.decode("utf-8")
+
+    def test_dashboard_declares_utf8(self, tmp_path):
+        outfile = str(tmp_path / "dashboard.html")
+        generate_summary_html({"Following": 1}, {}, outfile)
+
+        raw = Path(outfile).read_bytes()
+        assert b'<meta charset="utf-8">' in raw
+        raw.decode("utf-8")
+
+    def test_non_ascii_title_survives_roundtrip(self, tmp_path):
+        outfile = str(tmp_path / "unicode.html")
+        generate_html(["alice"], "Café — naïve", "Sübtitle", "#fff", outfile)
+
+        assert "Café — naïve" in Path(outfile).read_text(encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Unit Tests — default output location
+# ---------------------------------------------------------------------------
+
+
+class TestDefaultOutputDir:
+    """Reports name real people. Running the tool from a clone of this repo is
+    normal, so the default must never put them where `git add -A` would.
+    """
+
+    @property
+    def tool_dir(self):
+        return Path(ig_unfollow_checker.__file__).resolve().parent
+
+    def test_lands_beside_the_export(self, tmp_path):
+        export = tmp_path / "instagram-export.zip"
+        assert default_output_dir(str(export)) == tmp_path.resolve() / REPORT_DIRNAME
+
+    def test_export_inside_the_checkout_falls_back_to_home(self):
+        export = self.tool_dir / "instagram-export.zip"
+        assert default_output_dir(str(export)) == Path.home() / "ig-unfollow-checker-reports"
+
+    def test_export_deeper_inside_the_checkout_also_falls_back(self):
+        export = self.tool_dir / "nested" / "deeper" / "export.zip"
+        assert default_output_dir(str(export)) == Path.home() / "ig-unfollow-checker-reports"
+
+    @pytest.mark.parametrize("where", [
+        "instagram-export.zip",
+        "nested/export.zip",
+        "a/b/c/export.zip",
+        None,
+    ])
+    def test_never_resolves_inside_the_checkout(self, where, monkeypatch):
+        monkeypatch.chdir(self.tool_dir)
+        source = str(self.tool_dir / where) if where else None
+        out = default_output_dir(source).resolve()
+        assert out != self.tool_dir and self.tool_dir not in out.parents, \
+            f"reports would land inside the repo at {out}"
+
+    def test_sibling_directory_is_not_treated_as_inside(self, tmp_path):
+        # a path that merely shares a prefix with the tool dir is still outside
+        sibling = Path(str(self.tool_dir) + "-elsewhere")
+        out = default_output_dir(str(sibling / "export.zip"))
+        assert out == sibling.resolve() / REPORT_DIRNAME
 
 
 # ---------------------------------------------------------------------------

@@ -120,6 +120,30 @@ if it finds a session cookie — but it is still automated access, and that is a
 different risk category from parsing a file. Use a VPN. If you only want the
 safe half, run `analysis/` and never run this.
 
+## What it looks like
+
+<img src="docs/screenshots/summary.png" width="860" alt="Summary card: 605 accounts you follow, minus the 453 who follow you back, leaves 152 not following you back; after checking each one, 124 are still active, 26 are deleted or deactivated, and 2 are inconclusive">
+
+Point it at the export and walk away. Every account is checked one at a time and progress is printed as it goes, so an interrupted run tells you exactly where to resume.
+
+<img src="docs/screenshots/terminal-run.png" width="720" alt="Terminal output: 605 following, 573 followers, 152 not following back, then a per-account check log ending in a summary of 124 active, 26 deleted and 2 inconclusive accounts">
+
+`dashboard.html` is the one to open first — the counts up top, a link to every report, and the extra lists from your export tucked into collapsible sections.
+
+<img src="docs/screenshots/dashboard.png" width="720" alt="Dashboard page: stat tiles for 605 following, 573 followers, 453 mutuals, 152 not following back and 120 fans, followed by links to each generated report and collapsible sections for pending follow requests, recent follow requests, recently unfollowed and follow requests received">
+
+The active list is the one you work through — accounts that really exist and really don't follow you back.
+
+<img src="docs/screenshots/active-report.png" width="860" alt="The active_not_following_back.html report: a numbered list of profile links, several greyed out with click counts beside them, a 'Clicked: 22 / 124' badge in the corner, and callouts explaining that the badge counts every profile opened and that (3x) means a link was opened three times">
+
+The `(1x)` / `(2x)` markers are click counts: each link records how many times you've opened it and darkens as it goes — blue when untouched, grey after one visit, darker at two and three. Instagram has no bulk unfollow, so you open every profile by hand; the counts are how you pick up where you left off, and anything at `(2x)` or more is usually one whose unfollow didn't take the first time. Counts live in your browser under a single key shared by every report, so a username you already dealt with still shows its count when it turns up in another list. That also means the `Clicked:` badge counts everything you've ever opened, not just the page you're on, so its number can run ahead of that page's total.
+
+<img src="docs/screenshots/deleted-report.png" width="860" alt="The deleted_accounts.html report: a numbered list of red profile links, with a callout explaining that none of these profiles exist any more">
+
+The ghost list is the payoff. Instagram counts these accounts in your following list but never tells you they're gone, so the only alternative is opening a few hundred profiles by hand to find out.
+
+<sub>Screenshots come from a real run of the pipeline over a synthetic export — every handle shown is a placeholder, and the active/deleted proportions match an actual 1,066-account run. Regenerate them with <code>python3 docs/make_screenshots.py</code>.</sub>
+
 ## Setup
 
 The export analysis needs **nothing installed** beyond Python — it is a file
@@ -266,6 +290,54 @@ aborts if it detects an Instagram session cookie, because public profile data
 needs no login and sending a session makes every request attributable to your
 account. Generated reports and any file derived from your export are gitignored;
 do not commit them.
+
+## Comparing two exports
+
+```bash
+python3 ig_unfollow_checker.py --diff old-export.zip new-export.zip
+```
+
+This generates:
+- **Lost followers** — people who were following you before but aren't now
+- **New followers** — people who started following you
+- **You unfollowed** — accounts you stopped following
+- **You started following** — new accounts you followed
+- **Possible blocks** — accounts that were **mutual** (you followed each other) but now they don't follow you anymore. This is the strongest signal of a block, since mutuals rarely just unfollow.
+
+It then optionally checks each "lost follower" with the browser to determine if they deleted their account or are still active (and therefore either unfollowed or blocked you).
+
+> **Tip:** Export your data monthly and keep the zips. Name them by date (Instagram does this automatically). The more snapshots you have, the more useful this feature becomes.
+
+## Output files
+
+Reports go to an `ig-reports/` folder next to the export you point the tool at, and the run prints the path on startup. They list real usernames, so the default deliberately keeps them out of a clone of this repo: run the tool from inside the checkout and the reports go to `~/ig-unfollow-checker-reports/` instead, where a stray `git add -A` can't pick them up. Pass `--output-dir DIR` to put them anywhere you like.
+
+| File | Description |
+|------|-------------|
+| `dashboard.html` | Summary overview with stats and links to all reports |
+| `not_following_back.html` | Accounts you follow that don't follow you (click-tracked) |
+| `fans_you_dont_follow.html` | Accounts that follow you but you don't follow back (click-tracked) |
+| `mutuals.html` | Accounts you follow each other |
+| `active_not_following_back.html` | Verified existing accounts not following you back |
+| `deleted_accounts.html` | Confirmed deleted/deactivated ghost accounts |
+| `inconclusive_accounts.html` | Couldn't determine status (rate-limited) |
+| `results.json` | Raw data for all browser checks |
+| `.txt` files | Plain text versions of each list |
+
+Additional HTML files are generated for any pending requests, recent unfollows, or received follow requests found in your export.
+
+## Options
+
+```
+--analyze-only          Just analyze the zip (no browser checks, no VPN needed)
+--check-list FILE       Check a plain text file of usernames instead of a zip
+--diff OLD_ZIP NEW_ZIP  Compare two exports to detect unfollows/blocks
+--start-at N            Resume browser checks from position N (after rate limit)
+--resume                Continue from results.json, retrying errors and rate-limited entries
+--limit N               Check at most N accounts this run (for a trial run)
+--output-dir DIR        Save reports to DIR (default: ig-reports/ beside your export)
+--show-browser          Show the browser window (for debugging)
+```
 
 ## Tests
 
