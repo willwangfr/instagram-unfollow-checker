@@ -1,0 +1,82 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Instagram export analyser</title>
+<style>
+:root{--bg:#111;--fg:#eee;--dim:#888;--line:#262626;--accent:#4fc3f7}
+*{box-sizing:border-box}
+body{font:14px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--bg);color:var(--fg);margin:0;padding:24px;max-width:1200px;margin-inline:auto}
+h1{font-size:22px;margin:0 0 4px}h2{font-size:16px;margin:28px 0 8px;color:var(--accent)}
+p.note{color:var(--dim);margin:4px 0 14px}
+#drop{display:block;border:2px dashed #333;border-radius:12px;padding:44px 20px;text-align:center;cursor:pointer;transition:.15s}
+#drop:hover,#drop.over{border-color:var(--accent);background:#151515}
+#drop b{color:var(--accent);font-size:16px}
+#drop .note{display:block;margin-top:6px}
+input[type=file]{display:none}
+.bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:14px 0}
+input[type=text],select{background:#1c1c1c;color:var(--fg);border:1px solid #333;border-radius:6px;padding:6px 10px;font:inherit}
+input[type=text]{min-width:230px}
+button{background:#2a2a2a;color:#ccc;border:1px solid #3a3a3a;border-radius:6px;padding:6px 12px;cursor:pointer;font:inherit}
+button:hover{color:#fff;border-color:#555}
+.cards{display:flex;flex-wrap:wrap;gap:10px;margin:14px 0}
+.card{background:#171717;border:1px solid var(--line);border-radius:10px;padding:12px 16px;min-width:120px}
+.card b{display:block;font-size:22px}
+table{border-collapse:collapse;width:100%}
+th{text-align:left;color:var(--dim);font-weight:400;border-bottom:1px solid #333;padding:7px 10px 7px 0;cursor:pointer;white-space:nowrap;position:sticky;top:0;background:var(--bg)}
+th:hover{color:#fff}
+td{padding:4px 10px 4px 0;border-bottom:1px solid #1a1a1a;vertical-align:top}
+td.n{text-align:right;color:#9ccc65;white-space:nowrap}
+td.meta{color:#777;white-space:nowrap}
+a{color:var(--accent);text-decoration:none}a:hover{color:#fff;text-decoration:underline}
+a.done{color:#4a4a4a!important;text-decoration:line-through}
+.pill{font-size:11px;padding:1px 7px;border-radius:10px;border:1px solid}
+#log{background:#0d0d0d;border:1px solid var(--line);border-radius:8px;padding:10px 14px;color:#777;font-size:12px;white-space:pre-wrap;max-height:230px;overflow:auto}
+.err{color:#ff5252}.warn{color:#ffca28}.ok{color:#66bb6a}
+.hidden{display:none}
+</style>
+
+<h1>Instagram export analyser</h1>
+<p class="note">
+  Drop the ZIP Instagram gave you. Everything is parsed in this tab —
+  <b>nothing is uploaded</b>, there is no server, and the page makes no network
+  requests at all. Turn your wifi off and it still works.
+  Drop <b>two or more</b> exports from different dates to unlock the timeline,
+  rename detection and block detection.
+</p>
+
+<label id="drop" for="f">
+  <b>Drop your Instagram export ZIP here</b><br>
+  <span class="note">or click to choose — you can select several at once</span>
+  <input id="f" type="file" accept=".zip" multiple>
+</label>
+
+<div id="out" class="hidden">
+  <div class="cards" id="cards"></div>
+
+  <h2>Who to look at</h2>
+  <div class="bar">
+    <input id="q" type="text" placeholder="search username…">
+    <select id="rel">
+      <option value="">all relationships</option>
+      <option value="you_follow_only">you follow, they don't</option>
+      <option value="mutual">mutual</option>
+      <option value="they_follow_only">they follow, you don't</option>
+    </select>
+    <select id="tier"><option value="">all verdicts</option></select>
+    <label class="note"><input type="checkbox" id="hide"> hide clicked</label>
+    <button id="csv">Download CSV</button>
+    <button id="reset">Reset clicks</button>
+    <span class="note" id="count"></span>
+  </div>
+  <table><thead><tr id="hr"></tr></thead><tbody id="rows"></tbody></table>
+
+  <h2>Likely blocks</h2>
+  <p class="note" id="blocknote"></p>
+  <table><thead><tr><th>#</th><th>username</th><th>window</th><th>was mutual</th></tr></thead>
+  <tbody id="blocks"></tbody></table>
+</div>
+
+<h2>What happened</h2>
+<div id="log">Waiting for a file…</div>
+
+<script type="module" src="app.js"></script>

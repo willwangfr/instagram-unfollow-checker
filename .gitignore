@@ -6,10 +6,13 @@ __pycache__/
 dist/
 build/
 
-# Generated output (personal data — no source HTML files exist in this project)
+# Generated output. Reports are HTML and list real usernames, so HTML is banned
+# by default and the app's own pages are allowed back in by name. A blanket ban
+# with no exceptions silently swallowed the entire web app once already.
 results*.json
 *.html
-!README.md
+!index.html
+!web/*.html
 *.txt
 !requirements*.txt
 check_*.log

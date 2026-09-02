@@ -1,0 +1,590 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Instagram export analyser</title>
+<style>
+:root{--bg:#111;--fg:#eee;--dim:#888;--line:#262626;--accent:#4fc3f7}
+*{box-sizing:border-box}
+body{font:14px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--bg);color:var(--fg);margin:0;padding:24px;max-width:1200px;margin-inline:auto}
+h1{font-size:22px;margin:0 0 4px}h2{font-size:16px;margin:28px 0 8px;color:var(--accent)}
+p.note{color:var(--dim);margin:4px 0 14px}
+#drop{display:block;border:2px dashed #333;border-radius:12px;padding:44px 20px;text-align:center;cursor:pointer;transition:.15s}
+#drop:hover,#drop.over{border-color:var(--accent);background:#151515}
+#drop b{color:var(--accent);font-size:16px}
+#drop .note{display:block;margin-top:6px}
+input[type=file]{display:none}
+.bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:14px 0}
+input[type=text],select{background:#1c1c1c;color:var(--fg);border:1px solid #333;border-radius:6px;padding:6px 10px;font:inherit}
+input[type=text]{min-width:230px}
+button{background:#2a2a2a;color:#ccc;border:1px solid #3a3a3a;border-radius:6px;padding:6px 12px;cursor:pointer;font:inherit}
+button:hover{color:#fff;border-color:#555}
+.cards{display:flex;flex-wrap:wrap;gap:10px;margin:14px 0}
+.card{background:#171717;border:1px solid var(--line);border-radius:10px;padding:12px 16px;min-width:120px}
+.card b{display:block;font-size:22px}
+table{border-collapse:collapse;width:100%}
+th{text-align:left;color:var(--dim);font-weight:400;border-bottom:1px solid #333;padding:7px 10px 7px 0;cursor:pointer;white-space:nowrap;position:sticky;top:0;background:var(--bg)}
+th:hover{color:#fff}
+td{padding:4px 10px 4px 0;border-bottom:1px solid #1a1a1a;vertical-align:top}
+td.n{text-align:right;color:#9ccc65;white-space:nowrap}
+td.meta{color:#777;white-space:nowrap}
+a{color:var(--accent);text-decoration:none}a:hover{color:#fff;text-decoration:underline}
+a.done{color:#4a4a4a!important;text-decoration:line-through}
+.pill{font-size:11px;padding:1px 7px;border-radius:10px;border:1px solid}
+#log{background:#0d0d0d;border:1px solid var(--line);border-radius:8px;padding:10px 14px;color:#777;font-size:12px;white-space:pre-wrap;max-height:230px;overflow:auto}
+.err{color:#ff5252}.warn{color:#ffca28}.ok{color:#66bb6a}
+.hidden{display:none}
+</style>
+
+<h1>Instagram export analyser</h1>
+<p class="note">
+  Drop the ZIP Instagram gave you. Everything is parsed in this tab —
+  <b>nothing is uploaded</b>, there is no server, and the page makes no network
+  requests at all. Turn your wifi off and it still works.
+  Drop <b>two or more</b> exports from different dates to unlock the timeline,
+  rename detection and block detection.
+</p>
+
+<label id="drop" for="f">
+  <b>Drop your Instagram export ZIP here</b><br>
+  <span class="note">or click to choose — you can select several at once</span>
+  <input id="f" type="file" accept=".zip" multiple>
+</label>
+
+<div id="out" class="hidden">
+  <div class="cards" id="cards"></div>
+
+  <h2>Who to look at</h2>
+  <div class="bar">
+    <input id="q" type="text" placeholder="search username…">
+    <select id="rel">
+      <option value="">all relationships</option>
+      <option value="you_follow_only">you follow, they don't</option>
+      <option value="mutual">mutual</option>
+      <option value="they_follow_only">they follow, you don't</option>
+    </select>
+    <select id="tier"><option value="">all verdicts</option></select>
+    <label class="note"><input type="checkbox" id="hide"> hide clicked</label>
+    <button id="csv">Download CSV</button>
+    <button id="reset">Reset clicks</button>
+    <span class="note" id="count"></span>
+  </div>
+  <table><thead><tr id="hr"></tr></thead><tbody id="rows"></tbody></table>
+
+  <h2>Likely blocks</h2>
+  <p class="note" id="blocknote"></p>
+  <table><thead><tr><th>#</th><th>username</th><th>window</th><th>was mutual</th></tr></thead>
+  <tbody id="blocks"></tbody></table>
+</div>
+
+<h2>What happened</h2>
+<div id="log">Waiting for a file…</div>
+
+<script>
+/* ==== zipreader.js ==== */
+// Copyright (C) 2026 William Wang
+// Licensed under the GNU AGPL v3 or later. See LICENSE.
+//
+// A minimal ZIP reader, so the page has no dependencies and makes no network
+// requests. Entries are read through Blob.slice and inflated with the built-in
+// DecompressionStream, so a 2 GB export never enters memory — only the few
+// small files we actually want.
+
+const U = (b, o) => new DataView(b).getUint32(o, true);
+const S = (b, o) => new DataView(b).getUint16(o, true);
+const U64 = (b, o) => Number(new DataView(b).getBigUint64(o, true));
+
+async function slice(file, start, end) {
+  return await file.slice(start, Math.min(end, file.size)).arrayBuffer();
+}
+
+// The end-of-central-directory record sits at the tail, after a comment of
+// unknown length, so it has to be found by scanning backwards for its
+// signature rather than read from a fixed offset.
+async function findEOCD(file) {
+  const want = Math.min(file.size, 66560);          // 64 KB + max comment
+  const buf = await slice(file, file.size - want, file.size);
+  const dv = new DataView(buf);
+  for (let i = buf.byteLength - 22; i >= 0; i--) {
+    if (dv.getUint32(i, true) === 0x06054b50) {
+      const base = file.size - want;
+      let entries = dv.getUint16(i + 10, true);
+      let cdSize = dv.getUint32(i + 12, true);
+      let cdOff = dv.getUint32(i + 16, true);
+      // ZIP64: the 32-bit fields saturate, and the real values live in a
+      // separate record pointed at by the locator just before the EOCD.
+      if (cdOff === 0xffffffff || entries === 0xffff) {
+        for (let j = i - 20; j >= 0; j--) {
+          if (dv.getUint32(j, true) === 0x07064b50) {
+            const z64 = U64(buf, j + 8);
+            const zb = await slice(file, z64, z64 + 56);
+            entries = U64(zb, 32); cdSize = U64(zb, 40); cdOff = U64(zb, 48);
+            break;
+          }
+        }
+      }
+      return { entries, cdSize, cdOff, base };
+    }
+  }
+  throw new Error("Not a ZIP file (no end-of-central-directory record found).");
+}
+
+async function readCentralDirectory(file) {
+  const { entries, cdSize, cdOff } = await findEOCD(file);
+  const buf = await slice(file, cdOff, cdOff + cdSize);
+  const dv = new DataView(buf);
+  const dec = new TextDecoder();
+  const out = new Map();
+  let p = 0;
+  for (let n = 0; n < entries && p + 46 <= buf.byteLength; n++) {
+    if (dv.getUint32(p, true) !== 0x02014b50) break;
+    const method = dv.getUint16(p + 10, true);
+    let comp = dv.getUint32(p + 20, true);
+    let uncomp = dv.getUint32(p + 24, true);
+    const nameLen = dv.getUint16(p + 28, true);
+    const extraLen = dv.getUint16(p + 30, true);
+    const commentLen = dv.getUint16(p + 32, true);
+    let local = dv.getUint32(p + 42, true);
+    const name = dec.decode(new Uint8Array(buf, p + 46, nameLen));
+    if (local === 0xffffffff || uncomp === 0xffffffff || comp === 0xffffffff) {
+      let e = p + 46 + nameLen;
+      const endExtra = e + extraLen;
+      while (e + 4 <= endExtra) {
+        const id = dv.getUint16(e, true), sz = dv.getUint16(e + 2, true);
+        if (id === 0x0001) {
+          let q = e + 4;
+          if (uncomp === 0xffffffff) { uncomp = U64(buf, q); q += 8; }
+          if (comp === 0xffffffff) { comp = U64(buf, q); q += 8; }
+          if (local === 0xffffffff) { local = U64(buf, q); }
+          break;
+        }
+        e += 4 + sz;
+      }
+    }
+    out.set(name, { name, method, comp, uncomp, local });
+    p += 46 + nameLen + extraLen + commentLen;
+  }
+  return out;
+}
+
+async function readEntry(file, entry) {
+  // The local header repeats the name and extra field, with its own lengths.
+  const head = await slice(file, entry.local, entry.local + 30);
+  const nameLen = S(head, 26), extraLen = S(head, 28);
+  const start = entry.local + 30 + nameLen + extraLen;
+  const blob = file.slice(start, start + entry.comp);
+  if (entry.method === 0) return new Uint8Array(await blob.arrayBuffer());
+  if (entry.method !== 8) throw new Error(`Unsupported compression (${entry.method}) for ${entry.name}`);
+  const ds = new DecompressionStream("deflate-raw");
+  const buf = await new Response(blob.stream().pipeThrough(ds)).arrayBuffer();
+  return new Uint8Array(buf);
+}
+
+async function readText(file, entry) {
+  return new TextDecoder("utf-8").decode(await readEntry(file, entry));
+}
+
+/* ==== parsers.js ==== */
+// Copyright (C) 2026 William Wang
+// Licensed under the GNU AGPL v3 or later. See LICENSE.
+//
+// Ported from the Python parsers, including the lessons they learned the hard
+// way. Every function reports whether it found the shape it expected, so a
+// format change surfaces as "could not parse" instead of "you have no data" —
+// the failure that silently hid 2,659 pending requests in the Python version.
+
+const A_UNDERSCORE = /href="https:\/\/www\.instagram\.com\/_u\/([A-Za-z0-9_.]+)"/g;
+const A_PLAIN      = /href="https:\/\/www\.instagram\.com\/([A-Za-z0-9_.]+)"/g;
+// Followers and following are anchors; every other export page is a borderless
+// table with no links in it at all.
+const TABLE_USER   = /<td[^>]*>Username<\/td>\s*<td[^>]*>([A-Za-z0-9_.]+)<\/td>/g;
+// Each entry carries the moment the follow happened, right after the anchor.
+const PAIR_DATED   = /href="https:\/\/www\.instagram\.com\/(?:_u\/)?([A-Za-z0-9_.]+)"[^>]*>[\s\S]*?<\/a><\/div>\s*<div>([^<]+)<\/div>/g;
+const TABLE_DATED  = /<td[^>]*>Username<\/td>\s*<td[^>]*>([A-Za-z0-9_.]+)<\/td>[\s\S]*?<div class="_3-94 _a6-o">([^<]*)<\/div>/g;
+
+const all = (re, s) => { re.lastIndex = 0; return [...s.matchAll(re)]; };
+
+function parseUsernames(html) {
+  for (const [re, shape] of [[A_UNDERSCORE, "anchor"], [A_PLAIN, "anchor"], [TABLE_USER, "table"]]) {
+    const m = all(re, html);
+    if (m.length) return { users: m.map(x => x[1]), shape, ok: true };
+  }
+  return { users: [], shape: null, ok: false,
+           why: "No Instagram links or Username table cells found in this page." };
+}
+
+// "Aug 30, 2026 7:29 pm" — the only date format the export uses.
+const MONTHS = {Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11};
+function parseDate(s) {
+  const m = /^([A-Z][a-z]{2}) (\d{1,2}), (\d{4}) (\d{1,2}):(\d{2})\s*(am|pm)$/i.exec((s||"").trim());
+  if (!m) return null;
+  let h = +m[4] % 12;
+  if (/pm/i.test(m[6])) h += 12;
+  return new Date(+m[3], MONTHS[m[1]], +m[2], h, +m[5]);
+}
+
+/** username -> Date the follow happened. */
+function parseFollowDates(html) {
+  const out = new Map();
+  for (const [, u, t] of all(PAIR_DATED, html)) {
+    const d = parseDate(t);
+    if (d) out.set(u, d);
+  }
+  if (out.size) return { dates: out, ok: true };
+  return { dates: out, ok: false,
+           why: "Found no username/timestamp pairs in the expected layout." };
+}
+
+/**
+ * Dated username lists, e.g. the "recently unfollowed" log.
+ *
+ * Instagram has shipped two different shapes for this page. Exports up to
+ * early 2026 use anchors with a date beside them; later ones use a borderless
+ * table with no links at all. Both appear in the wild — the same account's
+ * February and August exports differ — so try each.
+ */
+function parseDatedUsers(html) {
+  for (const [re, shape] of [[PAIR_DATED, "anchor"], [TABLE_DATED, "table"]]) {
+    const out = new Map();
+    for (const [, u, t] of all(re, html)) {
+      const d = parseDate(t);
+      if (d) out.set(u, d);
+    }
+    if (out.size) return { rows: out, shape, ok: true };
+  }
+  return { rows: new Map(), shape: null, ok: false,
+           why: "No dated username entries found in either known layout." };
+}
+
+// Kept for callers that only want the table shape.
+const parseTableWithDates = parseDatedUsers;
+
+/**
+ * When the export was built. Older exports carry no <time> stamp at all, so
+ * fall back to the newest follow in the file — an export cannot predate its
+ * own newest entry. Falling back to "now" instead would sort an old export
+ * after a recent one and silently invert the whole timeline.
+ */
+function parseGeneratedAt(html, followDates) {
+  const m = /<time datetime="(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})/.exec(html);
+  if (m) return { at: new Date(`${m[1]}T${m[2]}:${m[3]}:00Z`), source: "stamp" };
+  if (followDates && followDates.size) {
+    let max = null;
+    for (const d of followDates.values()) if (!max || d > max) max = d;
+    if (max) return { at: max, source: "newest follow (no timestamp in this export)" };
+  }
+  return { at: null, source: null };
+}
+
+/** Locate the files we care about, whatever the export's folder layout. */
+function locate(names) {
+  // Materialise first: names is often an iterator, and spreading it more than
+  // once silently yields nothing after the first pass.
+  const all = [...names];
+  const find = (pred) => all.find(pred);
+  const inConn = n => n.includes("followers_and_following");
+  return {
+    following: find(n => n.endsWith("following.html") && inConn(n)),
+    followers: all.filter(n => /followers_\d+\.html$/.test(n) && inConn(n)).sort(),
+    unfollowLog: find(n => n.includes("recently_unfollowed_profiles") && n.endsWith(".html")),
+    pending: find(n => n.includes("pending_follow_requests") && n.endsWith(".html")),
+    blocked: find(n => n.includes("blocked_profiles") && n.endsWith(".html")),
+  };
+}
+
+/* ==== analysis.js ==== */
+// Copyright (C) 2026 William Wang
+// Licensed under the GNU AGPL v3 or later. See LICENSE.
+//
+// The judgements. Every verdict states how much the data supports it, because
+// "doesn't follow you back" hides three different situations that deserve
+// different decisions.
+
+const TIERS = {
+  dropped:      { label: "Followed you, then left",            colour: "#ff9800" },
+  confirmed:    { label: "Never followed back — confirmed",    colour: "#66bb6a" },
+  probable:     { label: "Never followed back — probable",     colour: "#4fc3f7" },
+  too_recent:   { label: "Too recent to judge",                colour: "#888"    },
+  renamed:      { label: "Cannot verify — handle changed",     colour: "#7e57c2" },
+};
+
+const DAY = 86400000;
+
+/**
+ * @param snaps [{date:'YYYY-MM-DD', following:Set, followers:Set,
+ *                followDates:Map, unfollowLog:Map}] oldest first
+ */
+function analyse(snaps) {
+  const latest = snaps[snaps.length - 1];
+  const now = latest.generatedAt || new Date();
+  const nfb = [...latest.following].filter(u => !latest.followers.has(u)).sort();
+  const fans = [...latest.followers].filter(u => !latest.following.has(u)).sort();
+  const mutuals = [...latest.following].filter(u => latest.followers.has(u)).sort();
+
+  const rows = [];
+  for (const u of [...latest.following, ...latest.followers].sort()) {
+    const inFo = latest.following.has(u), inFl = latest.followers.has(u);
+    const followedOn = latest.followDates.get(u) || null;
+    const age = followedOn ? Math.floor((now - followedOn) / DAY) : null;
+
+    // Did they ever appear as a follower in any snapshot we hold?
+    let lastSeenFollowing = null;
+    for (const s of snaps) if (s.followers.has(u)) lastSeenFollowing = s.date;
+    const ever = lastSeenFollowing !== null;
+    let leftBetween = null;
+    if (ever && !inFl) {
+      const i = snaps.findIndex(s => s.date === lastSeenFollowing);
+      if (i + 1 < snaps.length) leftBetween = `${lastSeenFollowing} .. ${snaps[i + 1].date}`;
+    }
+
+    // A rename makes a handle vanish from your own following list and come
+    // back under a new name. Continuity since the follow began rules it out —
+    // asking "present in every snapshot" instead would wrongly fail everyone
+    // you simply started following later.
+    let continuity = "n/a";
+    if (followedOn && inFo) {
+      const expected = snaps.filter(s => new Date(s.date) >= followedOn);
+      continuity = expected.length === 0 ? "n/a"
+        : expected.every(s => s.following.has(u)) ? "continuous" : "gap";
+    }
+
+    let tier = null;
+    if (inFo && !inFl) {
+      if (ever) tier = "dropped";
+      else if (age !== null && age <= 30) tier = "too_recent";
+      else if (continuity === "gap") tier = "renamed";
+      else if (age !== null && age > 365) tier = "confirmed";
+      else tier = "probable";
+    }
+    rows.push({ username: u, mutual: inFo && inFl, youFollow: inFo, followsYou: inFl,
+                followedOn, age, ever, leftBetween, continuity, tier });
+  }
+
+  return { rows, counts: { nfb: nfb.length, fans: fans.length, mutuals: mutuals.length,
+                           following: latest.following.size, followers: latest.followers.size },
+           blocks: detectBlocks(snaps) };
+}
+
+/**
+ * Instagram logs the follows YOU removed. A follow that disappeared from your
+ * following list with no matching log entry was removed by someone else, which
+ * is what a block leaves behind. It is a strong signal, never proof: a block is
+ * invisible to a logged-out visitor, and a deleted account looks the same.
+ */
+function detectBlocks(snaps) {
+  const log = snaps[snaps.length - 1].unfollowLog;
+  if (!log || log.size === 0) {
+    return { usable: false,
+             why: "No 'recently unfollowed' log in this export, so departures you caused "
+                + "cannot be separated from departures caused by someone else.",
+             candidates: [] };
+  }
+  // Only windows the log actually covers can be judged.
+  const oldest = [...log.values()].reduce((a, b) => a < b ? a : b);
+  const out = [];
+  for (let i = 0; i < snaps.length - 1; i++) {
+    const a = snaps[i], b = snaps[i + 1];
+    if (new Date(a.date) < oldest) continue;
+    for (const u of a.following) {
+      if (b.following.has(u) || log.has(u)) continue;
+      const wasMutual = a.followers.has(u);
+      out.push({ username: u, window: `${a.date} .. ${b.date}`, wasMutual,
+                 alsoLostFollower: wasMutual && !b.followers.has(u) });
+    }
+  }
+  return { usable: true, coveredFrom: oldest, candidates: out };
+}
+
+function toCSV(rows) {
+  const cols = ["username","relationship","verdict","you_followed_on","days_following",
+                "ever_followed_you","left_between","handle_continuity"];
+  const esc = v => {
+    const s = v === null || v === undefined ? "" : String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const line = r => [r.username,
+    r.mutual ? "mutual" : r.youFollow ? "you_follow_only" : "they_follow_only",
+    r.tier ? TIERS[r.tier].label : "",
+    r.followedOn ? r.followedOn.toISOString().slice(0, 10) : "",
+    r.age ?? "", r.ever, r.leftBetween || "", r.continuity].map(esc).join(",");
+  return [cols.join(","), ...rows.map(line)].join("\n");
+}
+
+/* ==== app.js ==== */
+// Copyright (C) 2026 William Wang
+// Licensed under the GNU AGPL v3 or later. See LICENSE.
+
+
+
+
+const $ = id => document.getElementById(id);
+const logEl = $("log");
+let LOG = [];
+function log(msg, cls) {
+  LOG.push(cls ? `<span class="${cls}">${msg}</span>` : msg);
+  logEl.innerHTML = LOG.join("\n");
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+// Clicked-through state, per browser. Never leaves this machine.
+const KEY = "ig_web_done";
+const getDone = () => { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch { return {}; } };
+const setDone = d => { try { localStorage.setItem(KEY, JSON.stringify(d)); } catch {} };
+
+let RESULT = null, SORT = { col: "username", dir: 1 };
+
+const COLS = [
+  ["username",    r => r.username,                          "s"],
+  ["relationship",r => r.mutual ? "mutual" : r.youFollow ? "you follow only" : "they follow only", "s"],
+  ["verdict",     r => r.tier ? TIERS[r.tier].label : "",   "s"],
+  ["you followed",r => r.followedOn ? r.followedOn.toISOString().slice(0,10) : "", "s"],
+  ["days",        r => r.age,                               "n"],
+  ["left between",r => r.leftBetween || "",                 "s"],
+  ["handle",      r => r.continuity,                        "s"],
+];
+
+async function loadSnapshot(file) {
+  log(`\n${file.name} — ${(file.size/1048576).toFixed(1)} MB`);
+  const names = await readCentralDirectory(file);
+  log(`  ${names.size.toLocaleString()} entries in the archive`);
+  const found = locate(names.keys());
+  if (!found.following || !found.followers.length) {
+    log("  Could not find followers/following pages. Did you request " +
+        '"Followers and following" in HTML format?', "err");
+    return null;
+  }
+
+  const followingHtml = await readText(file, names.get(found.following));
+  let followersHtml = "";
+  for (const f of found.followers) followersHtml += await readText(file, names.get(f));
+  if (found.followers.length > 1)
+    log(`  followers split across ${found.followers.length} files — read all of them`);
+
+  const fo = parseUsernames(followingHtml), fl = parseUsernames(followersHtml);
+  if (!fo.ok || !fl.ok) { log(`  Parse failed: ${(fo.why || fl.why)}`, "err"); return null; }
+
+  const dates = parseFollowDates(followingHtml);
+  if (!dates.ok) log("  No follow timestamps found — ages and tiers will be limited.", "warn");
+
+  let unfollowLog = new Map();
+  if (found.unfollowLog) {
+    const r = parseDatedUsers(await readText(file, names.get(found.unfollowLog)));
+    if (r.ok) { unfollowLog = r.rows; log(`  unfollow log: ${r.rows.size} entries (${r.shape} layout)`, "ok"); }
+    else log(`  unfollow log present but unreadable: ${r.why}`, "warn");
+  } else {
+    log("  no 'recently unfollowed' page in this export — block detection off", "warn");
+  }
+
+  const gen = parseGeneratedAt(followersHtml, dates.dates);
+  if (!gen.at) { log("  Could not date this export — skipping it.", "err"); return null; }
+  if (gen.source !== "stamp") log(`  dated from ${gen.source}`, "warn");
+  const generatedAt = gen.at;
+  const date = generatedAt.toISOString().slice(0, 10);
+  log(`  ${fo.users.length.toLocaleString()} following, ${fl.users.length.toLocaleString()} followers, dated ${date}`, "ok");
+  return { date, generatedAt, following: new Set(fo.users), followers: new Set(fl.users),
+           followDates: dates.dates, unfollowLog };
+}
+
+async function handleFiles(files) {
+  LOG = []; log(`Reading ${files.length} file${files.length > 1 ? "s" : ""}…`);
+  const snaps = [];
+  for (const f of files) {
+    try { const s = await loadSnapshot(f); if (s) snaps.push(s); }
+    catch (e) { log(`  ${f.name}: ${e.message}`, "err"); }
+  }
+  if (!snaps.length) { log("\nNothing usable was found.", "err"); return; }
+  snaps.sort((a, b) => a.date.localeCompare(b.date));
+  const uniq = [];
+  for (const s of snaps) if (!uniq.some(u => u.date === s.date)) uniq.push(s);
+  if (uniq.length === 1)
+    log("\nOne export only. Add older exports to date departures, spot renames and detect blocks.", "warn");
+
+  RESULT = analyse(uniq);
+  log(`\nAnalysed ${RESULT.rows.length.toLocaleString()} people across ${uniq.length} snapshot(s).`, "ok");
+  render();
+  $("out").classList.remove("hidden");
+}
+
+function render() {
+  const { counts, rows, blocks } = RESULT;
+  $("cards").innerHTML = [
+    ["Following", counts.following], ["Followers", counts.followers],
+    ["Mutuals", counts.mutuals], ["Don't follow back", counts.nfb],
+    ["You don't follow back", counts.fans],
+  ].map(([k, v]) => `<div class="card"><b>${v.toLocaleString()}</b><span class="note">${k}</span></div>`).join("");
+
+  const tsel = $("tier");
+  if (tsel.options.length === 1)
+    for (const [k, t] of Object.entries(TIERS))
+      tsel.insertAdjacentHTML("beforeend", `<option value="${k}">${t.label}</option>`);
+
+  $("hr").innerHTML = "<th>#</th>" + COLS.map(([lab]) =>
+    `<th data-c="${lab}">${lab}${SORT.col === lab ? (SORT.dir > 0 ? " ↑" : " ↓") : ""}</th>`).join("");
+  [...$("hr").querySelectorAll("th[data-c]")].forEach(th => th.onclick = () => {
+    const c = th.dataset.c;
+    SORT = { col: c, dir: SORT.col === c ? -SORT.dir : 1 };
+    render();
+  });
+
+  const q = $("q").value.toLowerCase(), rel = $("rel").value, tier = $("tier").value;
+  const hide = $("hide").checked, done = getDone();
+  const relOf = r => r.mutual ? "mutual" : r.youFollow ? "you_follow_only" : "they_follow_only";
+  let list = rows.filter(r =>
+    (!rel || relOf(r) === rel) && (!tier || r.tier === tier) &&
+    (!hide || !done[r.username]) && (!q || r.username.toLowerCase().includes(q)));
+
+  const col = COLS.find(c => c[0] === SORT.col) || COLS[0];
+  list.sort((a, b) => {
+    const x = col[1](a), y = col[1](b);
+    if (x === null || x === undefined || x === "") return 1;
+    if (y === null || y === undefined || y === "") return -1;
+    return (col[2] === "n" ? x - y : String(x).localeCompare(String(y))) * SORT.dir;
+  });
+
+  $("rows").innerHTML = list.slice(0, 2000).map((r, i) => {
+    const t = r.tier ? TIERS[r.tier] : null;
+    return `<tr><td class="meta">${i + 1}</td>` + COLS.map(([lab, get, ty], ci) => {
+      const v = get(r);
+      if (ci === 0) return `<td><a href="https://www.instagram.com/${r.username}/" target="_blank" rel="noopener"
+        data-u="${r.username}" class="${done[r.username] ? "done" : ""}">${r.username}</a></td>`;
+      if (lab === "verdict" && t)
+        return `<td><span class="pill" style="color:${t.colour};border-color:${t.colour}">${t.label}</span></td>`;
+      return `<td class="${ty === "n" ? "n" : "meta"}">${v === null || v === undefined ? "—" : v}</td>`;
+    }).join("") + "</tr>";
+  }).join("");
+
+  $("count").textContent = `${list.length.toLocaleString()} shown${list.length > 2000 ? " (first 2000)" : ""} · ${Object.keys(done).length} clicked`;
+
+  const b = blocks;
+  $("blocknote").innerHTML = b.usable
+    ? `Follows that vanished from your following list with no matching entry in your own unfollow log — someone else removed them. A block is invisible to a logged-out visitor, so this is a strong signal, never proof. Log covers from ${b.coveredFrom.toISOString().slice(0,10)}.`
+    : b.why;
+  $("blocks").innerHTML = b.candidates.slice(0, 300).map((c, i) =>
+    `<tr><td class="meta">${i + 1}</td><td><a href="https://www.instagram.com/${c.username}/" target="_blank" rel="noopener">${c.username}</a></td>
+     <td class="meta">${c.window}</td><td class="meta">${c.wasMutual ? "yes" : "no"}</td></tr>`).join("");
+}
+
+// wiring
+const drop = $("drop"), fileInput = $("f");
+fileInput.onchange = e => handleFiles([...e.target.files]);
+["dragenter", "dragover"].forEach(ev => drop.addEventListener(ev, e => {
+  e.preventDefault(); drop.classList.add("over"); }));
+["dragleave", "drop"].forEach(ev => drop.addEventListener(ev, e => {
+  e.preventDefault(); drop.classList.remove("over"); }));
+drop.addEventListener("drop", e => handleFiles([...e.dataTransfer.files]));
+document.addEventListener("click", e => {
+  const a = e.target.closest("a[data-u]");
+  if (!a) return;
+  const d = getDone(); d[a.dataset.u] = Date.now(); setDone(d);
+  a.classList.add("done");
+  $("count").textContent = $("count").textContent.replace(/\d+ clicked/, `${Object.keys(d).length} clicked`);
+});
+["q", "rel", "tier", "hide"].forEach(id => $(id).addEventListener("input", () => RESULT && render()));
+$("csv").onclick = () => {
+  const blob = new Blob([toCSV(RESULT.rows)], { type: "text/csv" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = "instagram-analysis.csv"; a.click();
+  URL.revokeObjectURL(a.href);
+};
+$("reset").onclick = () => { if (confirm("Clear all clicked marks?")) { setDone({}); render(); } };
+
+</script>
