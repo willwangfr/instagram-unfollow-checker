@@ -271,6 +271,25 @@ Roughly 8 seconds per account. Results save after every check and resume by
 username, so an interruption costs nothing. Three consecutive login walls stop
 the run; switch VPN server and resume.
 
+### Long runs
+
+Instagram rate-limits anonymous requests per IP. The checker stops after three
+consecutive login walls, so a graph of any size needs restarting periodically.
+`run_until_done.py` does that for you:
+
+```bash
+python3 run_until_done.py --check-list accounts.txt --output-dir reports
+```
+
+It resumes by username, so nothing is rechecked and nothing is lost. After a
+rate-limited stop it waits 45 minutes, doubling each time it comes back walled,
+up to four hours. That patience is the point: resuming a few minutes after a
+wall gets you walled again almost at once — measured on one account, a run
+restarted immediately managed 60 accounts, while the same list after a long
+pause managed 2,459.
+
+Start it before bed with a VPN on and it will grind through by morning.
+
 ## What it will not tell you
 
 - **When someone unfollowed you.** Instagram does not log it. Only the window
