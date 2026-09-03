@@ -52,14 +52,22 @@ def main():
     fo_on, fl_on = fdates["following"], fdates["followers"]
 
     checks = {}
+    # Later files win, and within a file the richer record wins. "Richer" is
+    # measured by how many fields actually carry a value, so a re-pass that
+    # adds links and emails supersedes an earlier check of the same account
+    # without a hand-maintained list of which field proves recency.
+    def richness(r):
+        return sum(1 for v in r.values() if v not in (None, "", [], False))
+
     for f in ("results.json", "blockcheck/results.json", "blocksuspects/results.json",
-              "fullgraph/results.json"):
+              "fullgraph/results.json", "tier1_enriched/results.json"):
         p = HERE / f
-        if p.exists():
-            for r in json.loads(p.read_text()).get("results", []):
-                # A later, richer run wins: it carries the private flag.
-                if r["username"] not in checks or r.get("verified") is not None:
-                    checks[r["username"]] = r
+        if not p.exists():
+            continue
+        for r in json.loads(p.read_text()).get("results", []):
+            prev = checks.get(r["username"])
+            if prev is None or richness(r) >= richness(prev):
+                checks[r["username"]] = r
 
     ghost = {}
     gp = HERE / "ghosts/ghost_profiles.csv"
