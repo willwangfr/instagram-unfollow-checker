@@ -292,13 +292,18 @@ PROFILE_JS = """(expand) => {
     const pic = q('meta[property="og:image"]')[0];
     return {
         header_text: header ? header.innerText : '',
+        emails: [...new Set(((header ? header.innerText : '').match(
+            /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g) || []))].slice(0, 5),
         highlight_titles: highlights,
         external_links: external,
         threads_handle: threads,
         verified: q('svg[aria-label="Verified"]').length > 0,
         profile_pic: pic ? pic.getAttribute('content') : null,
         recent_shortcodes: shortcodes.slice(0, 12),
-        has_location_tag: q('a[href*="/explore/locations/"]').length > 0,
+        // The bare /explore/locations/ link is Instagram's site footer and is
+        // present on every page; a real tag carries an id after the prefix.
+        has_location_tag: q('a[href*="/explore/locations/"]')
+            .some(a => /\/explore\/locations\/[0-9]/.test(a.getAttribute('href') || '')),
         has_more: hasMore,
     };
 }"""
@@ -310,6 +315,7 @@ def extract_bio(page, username: str) -> dict:
             "followers": None, "following": None, "posts": None,
             "verified": None, "profile_pic": None, "highlight_count": None,
             "highlight_titles": None, "threads_handle": None,
+            "external_links": None, "emails": None,
             "recent_shortcodes": None, "has_location_tag": None}
     info.update(extract_og_counts(page))
     try:
@@ -331,6 +337,8 @@ def extract_bio(page, username: str) -> dict:
     info["highlight_titles"] = d.get("highlight_titles") or []
     info["highlight_count"] = len(info["highlight_titles"])
     info["threads_handle"] = d.get("threads_handle")
+    info["external_links"] = d.get("external_links") or []
+    info["emails"] = d.get("emails") or []
     info["verified"] = d.get("verified")
     info["profile_pic"] = d.get("profile_pic")
     info["recent_shortcodes"] = d.get("recent_shortcodes")
@@ -528,6 +536,7 @@ def write_bios(results: list[dict], bios_path: Path) -> int:
              ("username", "status", "full_name", "bio", "external_link",
               "followers", "following", "posts", "verified", "profile_pic",
               "highlight_count", "highlight_titles", "threads_handle",
+              "external_links", "emails",
               "recent_shortcodes", "has_location_tag")}
             for r in results if r.get("full_name") or r.get("bio")]
     tmp = bios_path.with_suffix(".tmp")
