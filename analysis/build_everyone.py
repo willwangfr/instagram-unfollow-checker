@@ -52,22 +52,37 @@ def main():
     fo_on, fl_on = fdates["following"], fdates["followers"]
 
     checks = {}
-    # Later files win, and within a file the richer record wins. "Richer" is
-    # measured by how many fields actually carry a value, so a re-pass that
-    # adds links and emails supersedes an earlier check of the same account
-    # without a hand-maintained list of which field proves recency.
-    def richness(r):
-        return sum(1 for v in r.values() if v not in (None, "", [], False))
+    # Never discard an observation. When an account has been checked more than
+    # once, take the union field by field: a later pass that adds links must not
+    # erase a bio the earlier one captured, and a truncated record must not
+    # displace a complete one.
+    #
+    # None/""/[] mean "not captured". False is a real answer, so a corrected
+    # false replaces a stale true — that is how the has_location_tag bug, which
+    # reported true for every profile on the site, gets undone.
+    EMPTY = (None, "", [])
 
-    for f in ("results.json", "blockcheck/results.json", "blocksuspects/results.json",
-              "fullgraph/results.json", "tier1_enriched/results.json"):
+    def merge_into(dst, src):
+        for k, v in src.items():
+            if v in EMPTY and dst.get(k) not in EMPTY:
+                continue
+            dst[k] = v
+        return dst
+
+    sources = ("results.json", "blockcheck/results.json", "blocksuspects/results.json",
+               "fullgraph/results.json", "tier1_enriched/results.json")
+    seen_counts = {}
+    for f in sources:
         p = HERE / f
         if not p.exists():
             continue
         for r in json.loads(p.read_text()).get("results", []):
-            prev = checks.get(r["username"])
-            if prev is None or richness(r) >= richness(prev):
-                checks[r["username"]] = r
+            u = r["username"]
+            seen_counts[u] = seen_counts.get(u, 0) + 1
+            if u in checks:
+                merge_into(checks[u], r)
+            else:
+                checks[u] = dict(r)
 
     ghost = {}
     gp = HERE / "ghosts/ghost_profiles.csv"
@@ -76,13 +91,16 @@ def main():
 
     group_co = {}
     dm = {}
+    dm_match = {}
     dmp = HERE / "dm_index.json"
     if dmp.exists():
-        for d in json.loads(dmp.read_text()):
+        threads_all = json.loads(dmp.read_text())
+        for d in threads_all:
             if d["matched_username"]:
                 cur = dm.get(d["matched_username"])
                 if not cur or d["messages"] > cur["messages"]:
                     dm[d["matched_username"]] = d
+                dm_match[d["matched_username"]] = "handle"
 
     # Two people in the same group chat are connected to each other, which is
     # the closest thing to Instagram's "mutual connections" that can be had
@@ -126,6 +144,34 @@ def main():
                        if x.strip().lower() in name_to_user}
             for a in members:
                 group_co.setdefault(a, set()).update(m for m in members if m != a)
+
+    # A thread folder is named with the handle the person had when the thread
+    # began, so every rename since breaks the link. Matching the participant's
+    # display name against names we know recovers them — but only when the name
+    # is unambiguous, since two people can share one.
+    if dmp.exists():
+        by_name = {}
+        for u, r in checks.items():
+            n = (r.get("full_name") or "").strip().lower()
+            if n:
+                by_name.setdefault(n, set()).add(u)
+        for u, n in names.items():
+            if n.strip():
+                by_name.setdefault(n.strip().lower(), set()).add(u)
+        for d in threads_all:
+            if d["matched_username"]:
+                continue
+            ps = [x for x in d["participants"].split(" | ") if x]
+            if len(ps) != 1:
+                continue
+            cands = by_name.get(ps[0].strip().lower())
+            if not cands or len(cands) != 1:
+                continue          # ambiguous or unknown: leave it unmatched
+            u = next(iter(cands))
+            cur = dm.get(u)
+            if not cur or d["messages"] > cur["messages"]:
+                dm[u] = d
+            dm_match.setdefault(u, "display name")
 
     rows = []
     for u in graph:
@@ -197,8 +243,10 @@ def main():
             "dm_from_you": dm.get(u, {}).get("from_you", ""),
             "dm_from_them": dm.get(u, {}).get("from_them", ""),
             "dm_unanswered": (not dm[u]["you_spoke_last"]) if u in dm else "",
+            "dm_matched_by": dm_match.get(u, ""),
             "group_connections": len(group_co.get(u, ())),
-            "group_connection_names": " | ".join(sorted(group_co.get(u, ()))[:20]),
+            "group_connection_names": " | ".join(sorted(group_co.get(u, ()))),
+            "times_checked": seen_counts.get(u, 0),
         })
 
     cols = list(rows[0].keys())
@@ -215,7 +263,7 @@ def main():
              r["following_n"] if r["following_n"] != "" else None,
              r["following_to_follower_ratio"] if r["following_to_follower_ratio"] != "" else None,
              r["days_you_have_followed"] if r["days_you_have_followed"] != "" else None,
-             r["left_between"], r["bio"][:160], bool(r["likely_spam"]),
+             r["left_between"], r["bio"], bool(r["likely_spam"]),
              r["dm_messages"] if r["dm_messages"] != "" else None,
              r["dm_last"] or None, bool(r["dm_unanswered"]) if r["dm_unanswered"] != "" else False,
              r["group_connections"] or None]

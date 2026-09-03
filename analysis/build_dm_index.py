@@ -42,7 +42,7 @@ def parse_thread(folder, want_preview):
             body = ""
             if want_preview:
                 m = TEXT.search(blob)
-                body = (m.group(1).strip()[:120] if m else "")
+                body = (m.group(1).strip() if m else "")
             msgs.append((sender.strip(), t, body))
     return msgs
 
@@ -84,7 +84,7 @@ def main():
             "thread": t, "handle_in_folder": handle,
             "matched_username": matched or "",
             "in_your_graph": bool(matched),
-            "participants": " | ".join(sorted(s for s in senders if s.lower() not in ME))[:200],
+            "participants": " | ".join(sorted(s for s in senders if s.lower() not in ME)),
             "messages": len(msgs), "from_you": mine, "from_them": len(msgs) - mine,
             "first_message": first.isoformat()[:10] if first else "",
             "last_message": last.isoformat()[:10] if last else "",

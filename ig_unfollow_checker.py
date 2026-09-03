@@ -293,13 +293,13 @@ PROFILE_JS = """(expand) => {
     return {
         header_text: header ? header.innerText : '',
         emails: [...new Set(((header ? header.innerText : '').match(
-            /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g) || []))].slice(0, 5),
+            /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g) || []))],
         highlight_titles: highlights,
         external_links: external,
         threads_handle: threads,
         verified: q('svg[aria-label="Verified"]').length > 0,
         profile_pic: pic ? pic.getAttribute('content') : null,
-        recent_shortcodes: shortcodes.slice(0, 12),
+        recent_shortcodes: shortcodes,
         // The bare /explore/locations/ link is Instagram's site footer and is
         // present on every page; a real tag carries an id after the prefix.
         has_location_tag: q('a[href*="/explore/locations/"]')
@@ -454,7 +454,7 @@ def check_account(page, username: str) -> dict:
         return {"username": username, "status": "UNKNOWN", "title": title}
 
     except Exception as e:
-        return {"username": username, "status": "ERROR", "error": str(e)[:200]}
+        return {"username": username, "status": "ERROR", "error": str(e)}
 
 
 class Pacer:
@@ -786,7 +786,7 @@ ul{padding-left:20px}li{padding:2px 0}
     # Extra lists
     for label, users in lists.items():
         html += f'\n<details><summary>{html_mod.escape(label)} ({len(users)})</summary><ul>\n'
-        for u in users[:200]:
+        for u in users:
             eu = html_mod.escape(u)
             html += f'<li><a href="https://www.instagram.com/{eu}/" target="_blank">{eu}</a></li>\n'
         if len(users) > 200:
