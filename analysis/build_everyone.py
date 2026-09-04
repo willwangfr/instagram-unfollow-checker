@@ -303,6 +303,7 @@ td.meta{color:#777;white-space:nowrap}
 td.n{text-align:right;color:#9ccc65;white-space:nowrap}
 a{color:#4fc3f7;text-decoration:none}a:hover{color:#fff;text-decoration:underline}
 a.done{color:#4a4a4a !important;text-decoration:line-through}
+.hits{color:#ff9800;font-size:11px;margin-left:6px}
 .mutual{color:#ab47bc}.you_follow_only{color:#4fc3f7}.they_follow_only{color:#66bb6a}
 .gone{color:#ff5252}.priv{color:#ffca28}.spam{color:#ff7043}
 </style></head><body>
@@ -335,9 +336,13 @@ const COLS = [["username",0,"s"],["name",3,"s"],["relationship",1,"s"],["verdict
   ["status",6,"s"],["left between",12,"s"],["bio",13,"s"]];
 let sortCol = 8, sortDir = -1;   // default: most followers first
 const KEY='ig_unfollow_done';
+// Stored per name as a click count. Earlier versions stored a timestamp, so a
+// value big enough to be one is read as a single visit rather than shown as
+// "1756094400x".
+const asCount=v=>{const n=Number(v)||0;return n>1e10?1:n};
 const getDone=()=>{try{return JSON.parse(localStorage.getItem(KEY))||{}}catch(e){return {}}};
 const setDone=d=>localStorage.setItem(KEY,JSON.stringify(d));
-function mark(el){const d=getDone();d[el.dataset.user]=Date.now();setDone(d);render();}
+function mark(el){const d=getDone();d[el.dataset.user]=asCount(d[el.dataset.user])+1;setDone(d);render();}
 function reset(){if(confirm('Clear click history shared with the shortlist page?')){setDone({});render();}}
 const esc = s => (s===null||s===undefined?"":String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const fmt = v => v===null||v===undefined ? '<span style="color:#444">—</span>' : Number(v).toLocaleString();
@@ -379,6 +384,7 @@ function render(){
     out.push(`<tr><td style="color:#555">${n+1}</td>`
       +`<td><a href="https://www.instagram.com/${esc(r[0])}/" target="_blank" `
       +`data-user="${esc(r[0])}" onclick="mark(this)" class="${done[r[0]]?'done':''}">${esc(r[0])}</a>`
+      +(asCount(done[r[0]])?`<span class="hits">${asCount(done[r[0]])}\u00d7</span>`:'')
       +`${r[14]?' <span class="spam">spam?</span>':''}</td>`
       +`<td class="nm">${esc(r[3])}</td><td class="${r[1]}">${r[1].replace(/_/g,' ')}</td>`
       +`<td class="meta">${esc(r[2])}</td>`
@@ -394,7 +400,9 @@ function render(){
   document.getElementById('b').innerHTML=out.join('');
   document.getElementById('count').textContent =
     list.length + ' of ' + DATA.length + (list.length>3000?' (showing first 3000)':'');
-  document.getElementById('donec').textContent = Object.keys(done).length + ' clicked';
+  const names=Object.keys(done).length;
+  const visits=Object.values(done).reduce((a,v)=>a+asCount(v),0);
+  document.getElementById('donec').textContent = `${names} clicked · ${visits} visits`;
   header();
 }
 header(); render();

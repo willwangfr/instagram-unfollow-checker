@@ -30,22 +30,33 @@ TRACKER = """
 #bar button{margin-left:10px;background:#2a2a2a;color:#888;border:1px solid #3a3a3a;
             border-radius:4px;padding:2px 8px;cursor:pointer}
 a.done{color:#4a4a4a !important;text-decoration:line-through}
+.hits{color:#ff9800;font-size:11px;margin-left:6px}
 tr.hidden{display:none}
 </style>
 <script>
 // Kept in this page's own localStorage: no account access, nothing leaves the
 // browser. Clicking a name is what marks it, so the list doubles as a worklist.
 const KEY='ig_unfollow_done';
+// Stored per name as a click count. Earlier versions stored a timestamp, so a
+// value big enough to be one is read as a single visit rather than shown as
+// "1756094400x".
+const asCount=v=>{const n=Number(v)||0;return n>1e10?1:n};
 const get=()=>{try{return JSON.parse(localStorage.getItem(KEY))||{}}catch(e){return {}}};
 const set=d=>localStorage.setItem(KEY,JSON.stringify(d));
-function mark(el){const d=get();d[el.dataset.user]=Date.now();set(d);render();}
+function mark(el){const d=get();d[el.dataset.user]=asCount(d[el.dataset.user])+1;set(d);render();}
 function reset(){if(confirm('Clear all click history on this page?')){set({});render();}}
 function render(){
   const d=get(), hide=document.getElementById('hide').checked;
   let n=0;
   document.querySelectorAll('a[data-user]').forEach(a=>{
-    const done=!!d[a.dataset.user];
+    const c=asCount(d[a.dataset.user]), done=c>0;
     a.classList.toggle('done',done);
+    let tag=a.nextElementSibling;
+    if(!tag||!tag.classList.contains('hits')){
+      tag=document.createElement('span'); tag.className='hits';
+      a.insertAdjacentElement('afterend',tag);
+    }
+    tag.textContent = c ? c+'\u00d7' : '';
     a.closest('tr').classList.toggle('hidden',done&&hide);
     if(done)n++;
   });

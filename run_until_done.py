@@ -25,14 +25,24 @@ from pathlib import Path
 HERE = Path(__file__).parent
 
 
-def count_done(out_dir):
+def count_done(out_dir, wanted):
+    """How many of THIS list are already decided.
+
+    results.json accumulates across runs, so counting every record in it and
+    comparing against the length of the current list reports completion the
+    moment the file holds more rows than the list has entries — regardless of
+    whether any of them are the accounts being asked for.
+    """
     p = Path(out_dir) / "results.json"
     if not p.exists():
         return 0
     try:
-        return len(json.loads(p.read_text()).get("results", []))
+        rows = json.loads(p.read_text()).get("results", [])
     except (json.JSONDecodeError, OSError):
         return 0
+    settled = {r["username"] for r in rows
+               if r.get("status") in ("EXISTS", "EXISTS_PRIVATE", "NOT_FOUND")}
+    return len(wanted & settled)
 
 
 def log(msg):
@@ -50,14 +60,15 @@ def main():
     ap.add_argument("--max-hours", type=float, default=24)
     args = ap.parse_args()
 
-    total = len([l for l in Path(args.check_list).read_text().splitlines() if l.strip()])
+    wanted = {l.strip() for l in Path(args.check_list).read_text().splitlines() if l.strip()}
+    total = len(wanted)
     started = time.time()
     cooldown = args.cooldown
     attempt = 0
 
     while True:
         attempt += 1
-        before = count_done(args.output_dir)
+        before = count_done(args.output_dir, wanted)
         if before >= total:
             log(f"all {total} accounts checked — done")
             return 0
@@ -68,7 +79,7 @@ def main():
              "--check-list", args.check_list, "--resume",
              "--output-dir", args.output_dir],
             capture_output=True, text=True)
-        after = count_done(args.output_dir)
+        after = count_done(args.output_dir, wanted)
         gained = after - before
         walled = "Rate limited" in r.stdout
 
