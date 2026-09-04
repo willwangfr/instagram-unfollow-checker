@@ -70,7 +70,8 @@ def main():
         return dst
 
     sources = ("results.json", "blockcheck/results.json", "blocksuspects/results.json",
-               "fullgraph/results.json", "tier1_enriched/results.json")
+               "fullgraph/results.json", "tier1_enriched/results.json",
+               "results_merged.json")
     seen_counts = {}
     for f in sources:
         p = HERE / f
@@ -198,7 +199,8 @@ def main():
             action = "not a candidate — " + ("mutual" if rel == "mutual" else "fan")
         elif g == "deleted" or status == "NOT_FOUND":
             action = "unfollow: gone"
-        elif g in ("empty_public", "near_empty", "low_signal"):
+        elif g in ("empty_public", "empty_private", "near_empty", "low_signal",
+                   "bot_like"):
             action = "unfollow: empty shell"
         elif ever:
             action = "unfollow: followed you then left"

@@ -53,10 +53,23 @@ def main():
     global EXPORT_TIME
     EXPORT_TIME = export_generated_at(cfg.latest_zip)
     tl = json.loads((HERE / "follow_timeline.json").read_text())["not_following_back"]
+    # Ghost tiers take precedence over the confidence tiers, the same way they
+    # do in build_everyone. Without this the two reports disagree on how many
+    # people "followed you, then left", because one counts empty shells there
+    # and the other does not.
+    ghost = {}
+    gp = HERE / "ghosts" / "ghost_profiles.csv"
+    if gp.exists():
+        ghost = {r["username"]: r["tier"] for r in csv.DictReader(gp.open())}
+    GHOSTED = {"empty_public", "empty_private", "near_empty", "low_signal", "bot_like"}
     fd = json.loads((HERE / "follow_dates.json").read_text())["following"]
-    stable = set(json.loads((HERE / "handle_stability.json").read_text())["stable_handles"])
+    # "Present in every snapshot" fails anyone you simply started following
+    # later, which has nothing to do with renames. The right question is whether
+    # the handle stayed continuous since the follow began.
+    cont = json.loads((HERE / "continuity_v2.json").read_text())["continuity"]
     checks = load_checks(["results.json", "blockcheck/results.json",
-                          "blocksuspects/results.json"])
+                          "blocksuspects/results.json", "fullgraph/results.json",
+                          "tier1_enriched/results.json", "results_merged.json"])
     fo, fl = load_snapshot(cfg.latest_zip)
     nfb = sorted(fo - fl)
 
@@ -70,11 +83,13 @@ def main():
         ever = tl[u]["ever_followed"]
         if status == "NOT_FOUND":
             tier = None                      # dead handle, excluded from tiers
+        elif ghost.get(u) in GHOSTED:
+            tier = None                      # empty or bot-shaped: graded elsewhere
         elif ever:
             tier = "dropped"
         elif age is not None and age <= 30:
             tier = "too_recent"
-        elif u not in stable:
+        elif cont.get(u) == "gap":
             tier = "unverifiable"
         elif age is not None and age > 365:
             tier = "confirmed"
