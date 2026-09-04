@@ -94,7 +94,6 @@ def main():
     bios = ({p["username"]: p
              for p in json.loads(bp.read_text())["profiles"]} if bp.exists() else {})
     import datetime
-    NOW = datetime.datetime(2026, 8, 30, 21, 39)
 
     def age(u):
         d = dates.get(u)
@@ -106,7 +105,8 @@ def main():
         g, a = ghost.get(u), age(u)
         if g == "deleted":
             groups["dead"].append(u)
-        elif g in ("empty_public", "near_empty", "low_signal"):
+        elif g in ("empty_public", "empty_private", "near_empty", "low_signal",
+                   "bot_like"):
             groups["empty"].append(u)
         elif everf.get(u):
             groups["dropped"].append(u)

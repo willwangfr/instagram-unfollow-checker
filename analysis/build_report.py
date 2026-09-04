@@ -19,7 +19,7 @@ from pathlib import Path
 # anyone you started following after it.
 SNAPSHOTS = ["2026-02-10", "2026-02-24", "2026-03-27",
              "2026-08-12", "2026-08-24", "2026-08-31"]
-EXPORT_TIME = datetime.datetime(2026, 8, 30, 21, 39)
+EXPORT_TIME = None   # read from the export; see main()
 
 DEAD = {"NOT_FOUND"}
 LIVE = {"EXISTS", "EXISTS_PRIVATE"}
@@ -38,12 +38,15 @@ def load_checks(paths):
 
 def main():
     ap = argparse.ArgumentParser()
+    igpaths.add_config_arg(ap)
     ap.add_argument("--timeline", default="follow_timeline.json")
     ap.add_argument("--checks", nargs="+", default=["results.json"])
     ap.add_argument("--dates", default="follow_dates.json")
     ap.add_argument("--stability", default="handle_stability.json")
     ap.add_argument("--out", default="not_following_back_live.html")
     args = ap.parse_args()
+    global EXPORT_TIME
+    EXPORT_TIME = export_generated_at(igpaths.load(args.config).latest_zip)
 
     tl = json.loads(Path(args.timeline).read_text())["not_following_back"]
     checks = load_checks(args.checks)
