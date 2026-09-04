@@ -162,6 +162,7 @@ td.meta{{color:#777;font-size:11px;white-space:nowrap}}
 <p class="note">Ranked by how confidently the data supports the call. Click a
 heading to expand; every name opens the profile. Nothing here is acted on
 automatically &mdash; this is a list, not a queue.</p>''']
+    parts.append(TRACKER)
 
     for key, label, color, blurb in SECTIONS:
         us = groups[key]
