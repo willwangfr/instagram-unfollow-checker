@@ -121,6 +121,21 @@ def main():
             if len(ps) == 1 and d["matched_username"]:
                 name_to_user.setdefault(ps[0].strip().lower(), d["matched_username"])
 
+    # Instagram already knows who you consider close. Those lists are a better
+    # keep-list than one built by hand, and without them the shortlist happily
+    # recommends unfollowing your own close friends.
+    protected = {}
+    for part, label in (("close_friends", "close friend"),
+                        ("profiles_you've_favorited", "favourite")):
+        f = next((x for x in os.listdir(cfg.connections_dir)
+                  if part in x and x.endswith(".html")), None)
+        if not f:
+            continue
+        html = Path(cfg.connections_dir, f).read_text(encoding="utf-8", errors="replace")
+        for u in set(re.findall(
+                r'<td[^>]*>Username</td>\s*<td[^>]*>([A-Za-z0-9_.]+)</td>', html)):
+            protected.setdefault(u, []).append(label)
+
     names = {}
     for fn in sorted(os.listdir(cfg.connections_dir)):
         if fn.endswith(".html"):
@@ -197,6 +212,8 @@ def main():
         g = ghost.get(u, "")
         if rel != "you_follow_only":
             action = "not a candidate — " + ("mutual" if rel == "mutual" else "fan")
+        elif u in protected:
+            action = "keep — " + " + ".join(protected[u])
         elif g == "deleted" or status == "NOT_FOUND":
             action = "unfollow: gone"
         elif g in ("empty_public", "empty_private", "near_empty", "low_signal",
@@ -249,6 +266,7 @@ def main():
             "group_connections": len(group_co.get(u, ())),
             "group_connection_names": " | ".join(sorted(group_co.get(u, ()))),
             "times_checked": seen_counts.get(u, 0),
+            "protected": " + ".join(protected.get(u, ())),
         })
 
     cols = list(rows[0].keys())

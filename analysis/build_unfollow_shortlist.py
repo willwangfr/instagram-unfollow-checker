@@ -8,7 +8,7 @@ Only accounts you follow. Anyone the data cannot judge — a follow younger than
 30 days, or a handle that may have been renamed — is deliberately left out.
 """
 
-import argparse, csv, json, sys
+import argparse, csv, json, os, re, sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import igpaths
@@ -76,6 +76,15 @@ def main():
     HERE = cfg.work_dir
     global NOW
     NOW = export_generated_at(cfg.latest_zip)
+    protected = set()
+    for part in ("close_friends", "profiles_you've_favorited"):
+        f = next((x for x in os.listdir(cfg.connections_dir)
+                  if part in x and x.endswith(".html")), None)
+        if f:
+            protected |= set(re.findall(
+                r'<td[^>]*>Username</td>\s*<td[^>]*>([A-Za-z0-9_.]+)</td>',
+                Path(cfg.connections_dir, f).read_text(encoding="utf-8", errors="replace")))
+
     following, followers = load_snapshot(cfg.latest_zip)
     v2 = json.loads((HERE / "continuity_v2.json").read_text())
     cont, everf = v2["continuity"], v2["ever_followed"]
@@ -100,8 +109,11 @@ def main():
         return (NOW - datetime.datetime.fromisoformat(d)).days if d else None
 
     groups = {k: [] for k in ("dead", "empty", "stale", "dropped", "probable")}
-    excluded = {"too_recent": [], "renamed": []}
+    excluded = {"protected": [], "too_recent": [], "renamed": []}
     for u in sorted(tl):
+        if u in protected:
+            excluded["protected"].append(u)
+            continue
         g, a = ghost.get(u), age(u)
         if g == "deleted":
             groups["dead"].append(u)
@@ -217,6 +229,11 @@ automatically &mdash; this is a list, not a queue.</p>''']
         return "\n".join(rows) + '</table>'
 
     parts.append(f'''<h3 style="color:#7e57c2">Deliberately left off &mdash; {sum(len(v) for v in excluded.values())}</h3>
+<details><summary style="color:#66bb6a">On a list you made &mdash; {len(excluded["protected"])}</summary>
+<p class="note">Close friends and favourites, straight from your own Instagram
+lists. Held back regardless of the numbers: whatever the data says about
+reciprocity, you already told Instagram these people matter.</p>
+{excl_table(excluded["protected"], "#66bb6a")}</details>
 <details><summary style="color:#888">Too recent to judge &mdash; {len(excluded["too_recent"])}</summary>
 <p class="note">You started following them within the last 30 days. They have not
 had a fair chance to follow back. Newest follows last.</p>
