@@ -12,6 +12,7 @@ import argparse, csv, json, os, re, sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import igpaths
+from keepstore import KEEP_JS
 from follow_timeline import load_snapshot, export_generated_at
 import html as html_mod
 
@@ -21,7 +22,12 @@ HERE = None      # set from the config in main()
 TRACKER = """
 <div id="bar">Done: <b id="done">0</b> / <span id="tot">0</span>
   <label><input type="checkbox" id="hide" onchange="render()"> hide done</label>
-  <button onclick="reset()">reset</button></div>
+  <button onclick="reset()">reset</button>
+  <span style="margin-left:12px;color:#888">kept <b id="keptn" style="font-size:12px">0</b></span>
+  <button onclick="exportKeep()">export keep-list</button>
+  <button onclick="document.getElementById('kfile').click()">import</button>
+  <input type="file" id="kfile" accept=".json,.txt" hidden
+    onchange="const f=this.files[0];if(f)importKeep(f,(k,c)=>{alert('Imported '+k+' kept accounts and '+c+' click records, merged with what this browser already had.');this.value='';render();})"></div>
 <style>
 #bar{position:fixed;top:12px;right:20px;background:#1c1c1c;border:1px solid #333;
      border-radius:8px;padding:10px 14px;font-size:12px;z-index:99}
@@ -32,6 +38,8 @@ TRACKER = """
 a.done{color:#4a4a4a !important;text-decoration:line-through}
 .hits{color:#ff9800;font-size:11px;margin-left:6px}
 tr.hidden{display:none}
+.star{cursor:pointer;color:#444;margin-right:6px;user-select:none}
+.star.on{color:#66bb6a}
 </style>
 <script>
 // Kept in this page's own localStorage: no account access, nothing leaves the
@@ -46,11 +54,19 @@ const set=d=>localStorage.setItem(KEY,JSON.stringify(d));
 function mark(el){const d=get();d[el.dataset.user]=asCount(d[el.dataset.user])+1;set(d);render();}
 function reset(){if(confirm('Clear all click history on this page?')){set({});render();}}
 function render(){
-  const d=get(), hide=document.getElementById('hide').checked;
+  const d=get(), hide=document.getElementById('hide').checked, kept=keepSet();
   let n=0;
   document.querySelectorAll('a[data-user]').forEach(a=>{
     const c=asCount(d[a.dataset.user]), done=c>0;
     a.classList.toggle('done',done);
+    let st=a.previousElementSibling;
+    if(!st||!st.classList.contains('star')){
+      st=document.createElement('span'); st.className='star'; st.textContent='★';
+      st.title='keep — never suggest unfollowing';
+      st.onclick=()=>{toggleKeep(a.dataset.user); render();};
+      a.insertAdjacentElement('beforebegin',st);
+    }
+    st.classList.toggle('on', kept.has(a.dataset.user));
     let tag=a.nextElementSibling;
     if(!tag||!tag.classList.contains('hits')){
       tag=document.createElement('span'); tag.className='hits';
@@ -62,6 +78,7 @@ function render(){
   });
   document.getElementById('done').textContent=n;
   document.getElementById('tot').textContent=document.querySelectorAll('a[data-user]').length;
+  document.getElementById('keptn').textContent=kept.size;
 }
 document.addEventListener('DOMContentLoaded',render);
 </script>
@@ -84,6 +101,7 @@ def main():
             protected |= set(re.findall(
                 r'<td[^>]*>Username</td>\s*<td[^>]*>([A-Za-z0-9_.]+)</td>',
                 Path(cfg.connections_dir, f).read_text(encoding="utf-8", errors="replace")))
+    protected |= set(cfg.keep)
 
     following, followers = load_snapshot(cfg.latest_zip)
     v2 = json.loads((HERE / "continuity_v2.json").read_text())
@@ -174,6 +192,7 @@ td.meta{{color:#777;font-size:11px;white-space:nowrap}}
 <p class="note">Ranked by how confidently the data supports the call. Click a
 heading to expand; every name opens the profile. Nothing here is acted on
 automatically &mdash; this is a list, not a queue.</p>''']
+    parts.append("<script>" + KEEP_JS + "</script>")
     parts.append(TRACKER)
 
     for key, label, color, blurb in SECTIONS:
@@ -230,8 +249,8 @@ automatically &mdash; this is a list, not a queue.</p>''']
 
     parts.append(f'''<h3 style="color:#7e57c2">Deliberately left off &mdash; {sum(len(v) for v in excluded.values())}</h3>
 <details><summary style="color:#66bb6a">On a list you made &mdash; {len(excluded["protected"])}</summary>
-<p class="note">Close friends and favourites, straight from your own Instagram
-lists. Held back regardless of the numbers: whatever the data says about
+<p class="note">Close friends and favourites from your own Instagram lists, plus
+anyone on your keep-list. Held back regardless of the numbers: whatever the data says about
 reciprocity, you already told Instagram these people matter.</p>
 {excl_table(excluded["protected"], "#66bb6a")}</details>
 <details><summary style="color:#888">Too recent to judge &mdash; {len(excluded["too_recent"])}</summary>

@@ -17,6 +17,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import igpaths
+from keepstore import KEEP_JS
 
 NUMERIC = {"days_you_have_followed", "followers_n", "following_n", "posts_n",
            "following_to_follower_ratio", "dm_messages", "dm_from_you",
@@ -55,7 +56,7 @@ def main():
              "type": "n" if k in NUMERIC else "b" if k in BOOL else "s",
              "on": k in DEFAULT_ON} for k in cols]
 
-    html = PAGE.replace("__COLS__", json.dumps(meta)) \
+    html = PAGE.replace("__KEEPJS__", KEEP_JS).replace("__COLS__", json.dumps(meta)) \
                .replace("__DATA__", json.dumps(data, ensure_ascii=False)) \
                .replace("__N__", str(len(rows)))
     out = cfg.work_dir / args.out
@@ -99,6 +100,8 @@ tr.sel td{background:#17242b}
 a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline;color:#fff}
 a.done{color:#555 !important;text-decoration:line-through}
 .hits{color:#ff9800;font-size:11px;margin-left:5px}
+.star{cursor:pointer;color:#444;margin-right:5px;user-select:none}
+.star.on{color:#66bb6a}
 #detail{margin-top:10px;border:1px solid var(--line);border-radius:8px;padding:12px 14px;background:#151515;display:none}
 #detail.open{display:block}
 #detail h3{margin:0 0 8px;font-size:14px;color:var(--accent)}
@@ -110,7 +113,8 @@ a.done{color:#555 !important;text-decoration:line-through}
 
 <h1>Workbench &mdash; <span id="count"></span></h1>
 <p class="note">Drag a column heading to move it, drag its right edge to resize, click it to sort.
-Click any row to see every field in full. Layout is remembered in this browser.</p>
+Click any row to see every field in full. Layout is remembered in this browser.
+Star a name to keep it; export the keep-list to back it up or to feed it to the reports.</p>
 
 <div class="bar">
   <input id="q" placeholder="search anything…">
@@ -118,11 +122,16 @@ Click any row to see every field in full. Layout is remembered in this browser.<
   <button id="csv">Export view as CSV</button>
   <button id="resetlayout">Reset layout</button>
   <button id="resetclicks">Reset clicks</button>
+  <button id="kexport">Export keep-list</button>
+  <button id="kimport">Import keep-list</button>
+  <input type="file" id="kfile" accept=".json,.txt" hidden>
+  <label class="note" style="margin:0"><input type="checkbox" id="keptonly"> kept only</label>
 </div>
 
 <div class="wrap"><table><thead><tr id="hr"></tr></thead><tbody id="tb"></tbody></table></div>
 <div id="detail"></div>
 
+<script>__KEEPJS__</script>
 <script>
 const COLS = __COLS__, DATA = __DATA__, TOTAL = __N__;
 const IDX = Object.fromEntries(COLS.map((c,i)=>[c.key,i]));
@@ -179,8 +188,9 @@ function colMenu(){
 let VIEW=[];
 function render(){
   const q=document.getElementById('q').value.toLowerCase();
-  const done=load(CKEY,{});
+  const done=load(CKEY,{}), kept=keepSet();
   VIEW = q ? DATA.filter(r=>r.some(v=>v!==null&&String(v).toLowerCase().includes(q))) : DATA.slice();
+  if(document.getElementById('keptonly').checked) VIEW=VIEW.filter(r=>kept.has(r[IDX.username]));
   const si=IDX[L.sort.k], t=type(L.sort.k);
   VIEW.sort((a,b)=>{
     let x=a[si], y=b[si];
@@ -193,7 +203,7 @@ function render(){
       const v=r[IDX[k]], w=L.w[k]?`style="--w:${L.w[k]}px"`:'';
       if(k==='username'){
         const c=asCount(done[v]);
-        return `<td ${w}><a href="https://www.instagram.com/${esc(v)}/" target="_blank" rel="noopener" data-u="${esc(v)}" class="${c?'done':''}">${esc(v)}</a>${c?`<span class="hits">${c}×</span>`:''}</td>`;
+        return `<td ${w}><span class="star${kept.has(v)?' on':''}" data-keep="${esc(v)}" title="keep — never suggest unfollowing">★</span><a href="https://www.instagram.com/${esc(v)}/" target="_blank" rel="noopener" data-u="${esc(v)}" class="${c?'done':''}">${esc(v)}</a>${c?`<span class="hits">${c}×</span>`:''}</td>`;
       }
       if(type(k)==='n') return `<td class="n" ${w}>${v===null?'':Number(v).toLocaleString()}</td>`;
       if(type(k)==='b') return `<td ${w}>${v?'yes':''}</td>`;
@@ -205,6 +215,8 @@ function render(){
 }
 
 document.getElementById('tb').addEventListener('click',e=>{
+  const st=e.target.closest('.star');
+  if(st){toggleKeep(st.dataset.keep);render();return;}
   const a=e.target.closest('a[data-u]');
   if(a){const d=load(CKEY,{});d[a.dataset.u]=asCount(d[a.dataset.u])+1;save(CKEY,d);render();return;}
   const tr=e.target.closest('tr'); if(!tr)return;
@@ -213,7 +225,7 @@ document.getElementById('tb').addEventListener('click',e=>{
   const r=VIEW[+tr.dataset.i];
   const det=document.getElementById('detail');
   det.className='open';
-  det.innerHTML = `<h3>${esc(r[IDX.username])}</h3><dl>` + COLS.map(c=>{
+  det.innerHTML = `<h3>${esc(r[IDX.username])}${keepSet().has(r[IDX.username])?' <span style="color:#66bb6a">★ kept</span>':''}</h3><dl>` + COLS.map(c=>{
     const v=r[IDX[c.key]];
     if(v===null||v===''||v===false)return '';
     return `<dt>${c.key.replace(/_/g,' ')}</dt><dd>${esc(v)}</dd>`;}).join('') + '</dl>';
@@ -226,6 +238,11 @@ document.getElementById('resetlayout').onclick=()=>{
   L={order:COLS.map(c=>c.key), on:COLS.filter(c=>c.on).map(c=>c.key), w:{}, sort:{k:'followers_n',d:-1}};
   save(LKEY,L); render();};
 document.getElementById('resetclicks').onclick=()=>{ if(confirm('Clear click history?')){save(CKEY,{});render();} };
+document.getElementById('kexport').onclick=exportKeep;
+document.getElementById('kimport').onclick=()=>document.getElementById('kfile').click();
+document.getElementById('kfile').onchange=e=>{const f=e.target.files[0]; if(!f)return;
+  importKeep(f,(k,c)=>{alert(`Imported ${k} kept accounts and ${c} click records, merged with what this browser already had.`);e.target.value='';render();});};
+document.getElementById('keptonly').onchange=render;
 document.getElementById('csv').onclick=()=>{
   const ks=shown();
   const esc2=v=>{const s=v===null||v===undefined?'':String(v);return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s;};

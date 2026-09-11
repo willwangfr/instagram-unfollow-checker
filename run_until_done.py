@@ -58,7 +58,9 @@ def main():
     ap.add_argument("--max-cooldown", type=int, default=240,
                     help="cap on the growing cooldown, in minutes (default 240)")
     ap.add_argument("--max-hours", type=float, default=24)
-    args = ap.parse_args()
+    # Anything not recognised here — --min-delay, --timings and the rest — is
+    # handed to the checker untouched, so pacing is set in one place.
+    args, passthrough = ap.parse_known_args()
 
     wanted = {l.strip() for l in Path(args.check_list).read_text().splitlines() if l.strip()}
     total = len(wanted)
@@ -77,7 +79,7 @@ def main():
         r = subprocess.run(
             [sys.executable, "-u", str(HERE / "ig_unfollow_checker.py"),
              "--check-list", args.check_list, "--resume",
-             "--output-dir", args.output_dir],
+             "--output-dir", args.output_dir, *passthrough],
             capture_output=True, text=True)
         after = count_done(args.output_dir, wanted)
         gained = after - before

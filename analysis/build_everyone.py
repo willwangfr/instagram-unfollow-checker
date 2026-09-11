@@ -135,6 +135,8 @@ def main():
         for u in set(re.findall(
                 r'<td[^>]*>Username</td>\s*<td[^>]*>([A-Za-z0-9_.]+)</td>', html)):
             protected.setdefault(u, []).append(label)
+    for u in cfg.keep:
+        protected.setdefault(u, []).append("your keep-list")
 
     names = {}
     for fn in sorted(os.listdir(cfg.connections_dir)):

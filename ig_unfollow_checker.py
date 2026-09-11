@@ -71,6 +71,60 @@ NETWORK_OVERHEAD = 2.0
 # The 8% chance of an extra 6-20s pause in Pacer.sleep_seconds, amortised.
 JITTER_OVERHEAD = 0.08 * 13
 
+# Every pacing value that can be overridden, and the type it must hold.
+TIMINGS = {
+    "min_delay": ("MIN_DELAY", float),
+    "max_delay": ("MAX_DELAY", float),
+    "batch_size": ("BATCH_SIZE", int),
+    "batch_pause": ("BATCH_PAUSE", float),
+    "settle_ms": ("SETTLE_MS", int),
+    "page_timeout": ("PAGE_TIMEOUT", int),
+}
+
+
+def current_timings() -> dict:
+    g = globals()
+    return {key: g[name] for key, (name, _) in TIMINGS.items()}
+
+
+def apply_timings(overrides: dict) -> dict:
+    """Set the pacing from a dict of overrides, all or nothing.
+
+    Everything is validated before any value changes, so a rejected override
+    never leaves half the settings applied.
+    """
+    t = current_timings()
+    for key, value in (overrides or {}).items():
+        if value is None:
+            continue
+        if key not in TIMINGS:
+            raise ValueError(f"unknown timing {key!r}; expected one of: {', '.join(TIMINGS)}")
+        try:
+            t[key] = TIMINGS[key][1](value)
+        except (TypeError, ValueError):
+            raise ValueError(f"{key} must be a number, got {value!r}")
+    bad = [k for k, v in t.items() if v <= 0]
+    if bad:
+        raise ValueError(f"must be greater than zero: {', '.join(bad)}")
+    if t["min_delay"] > t["max_delay"]:
+        raise ValueError(f"min_delay ({t['min_delay']}) is larger than max_delay ({t['max_delay']})")
+    g = globals()
+    for key, (name, _) in TIMINGS.items():
+        g[name] = t[key]
+    return t
+
+
+def timing_warnings(t: dict) -> list[str]:
+    """Settings faster than anything that has actually been measured."""
+    out = []
+    if t["min_delay"] < 3.5:
+        out.append(f"min_delay {t['min_delay']}s: at 2.5-6s the checker was walled "
+                   "after 1,184 and then 503 profiles")
+    if t["settle_ms"] < 1200:
+        out.append(f"settle_ms {t['settle_ms']}: below 1200 was only spot-checked "
+                   "on two profiles")
+    return out
+
 
 # ---------------------------------------------------------------------------
 # Extraction
@@ -466,8 +520,11 @@ class Pacer:
     only when it appears, and recover when it stops.
     """
 
-    def __init__(self, base_min=MIN_DELAY, base_max=MAX_DELAY):
-        self.base_min, self.base_max = base_min, base_max
+    def __init__(self, base_min=None, base_max=None):
+        # Read the module values at construction. A default argument binds once,
+        # at import, so --min-delay would otherwise be silently ignored.
+        self.base_min = MIN_DELAY if base_min is None else base_min
+        self.base_max = MAX_DELAY if base_max is None else base_max
         self.mult = 1.0
         self.clean = 0
 
@@ -843,7 +900,39 @@ def main():
                         help=f"Where to write reports (default: {REPORT_DIRNAME}/ "
                              "beside the export you point it at)")
     parser.add_argument("--show-browser", action="store_true")
+    pace = parser.add_argument_group("pacing (defaults suit a residential connection)")
+    pace.add_argument("--timings", metavar="FILE",
+                      help="JSON file of pacing settings; flags below override it")
+    pace.add_argument("--min-delay", type=float, help=f"seconds between profiles, low end (default {MIN_DELAY})")
+    pace.add_argument("--max-delay", type=float, help=f"seconds between profiles, high end (default {MAX_DELAY})")
+    pace.add_argument("--batch-size", type=int, help=f"profiles between longer pauses (default {BATCH_SIZE})")
+    pace.add_argument("--batch-pause", type=float, help=f"base length of those pauses in seconds (default {BATCH_PAUSE})")
+    pace.add_argument("--settle-ms", type=int, help=f"wait after a page loads (default {SETTLE_MS})")
+    pace.add_argument("--page-timeout", type=int, help=f"give up on a page after this many ms (default {PAGE_TIMEOUT})")
+    pace.add_argument("--save-timings", metavar="FILE",
+                      help="write the settings in effect to FILE, for reuse with --timings")
     args = parser.parse_args()
+
+    overrides = {}
+    if args.timings:
+        try:
+            overrides.update(json.loads(Path(args.timings).read_text()))
+        except (OSError, json.JSONDecodeError) as e:
+            parser.error(f"could not read --timings {args.timings}: {e}")
+    for key in TIMINGS:
+        if getattr(args, key) is not None:
+            overrides[key] = getattr(args, key)
+    try:
+        effective = apply_timings(overrides)
+    except ValueError as e:
+        parser.error(str(e))
+    if overrides:
+        print("Pacing: " + ", ".join(f"{k}={v}" for k, v in effective.items()))
+    for w in timing_warnings(effective):
+        print(f"  warning: {w}")
+    if args.save_timings:
+        Path(args.save_timings).write_text(json.dumps(effective, indent=2) + "\n")
+        print(f"Saved pacing to {args.save_timings}")
 
     if not args.zipfile and not args.check_list and not args.diff:
         parser.error("Provide an Instagram export zip, --check-list <file>, or --diff <old> <new>")

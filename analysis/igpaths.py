@@ -9,7 +9,11 @@ export's ID and the machine's disk layout.
 """
 
 import json
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+from keepstore import load_keep, normalise  # noqa: E402
 
 DEFAULT_CONFIG = "snapshots.json"
 
@@ -39,6 +43,16 @@ class Config:
                                           key=lambda s: s["date"])]
         self.me = [h.lower() for h in data.get("me", [])]
         self.work_dir = resolve(data.get("work_dir", "."))
+
+        # Accounts never to suggest unfollowing, beyond the close friends and
+        # favourites the export already supplies.
+        keep = {normalise(k) for k in data.get("keep", [])}
+        if data.get("keep_file"):
+            kf = resolve(data["keep_file"])
+            if not kf.exists():
+                raise SystemExit(f"keep_file not found: {kf}")
+            keep |= load_keep(kf)
+        self.keep = sorted(k for k in keep if k)
 
         missing = [str(z) for _, z in self.snapshots if not z.exists()]
         if not self.latest_zip.exists():

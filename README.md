@@ -290,6 +290,48 @@ pause managed 2,459.
 
 Start it before bed with a VPN on and it will grind through by morning.
 
+### Tuning the pace
+
+Every delay can be changed, from the command line or from a JSON file:
+
+```bash
+python3 ig_unfollow_checker.py --check-list accounts.txt --min-delay 6 --max-delay 12
+python3 ig_unfollow_checker.py --check-list accounts.txt --min-delay 6 --save-timings slow.json
+python3 ig_unfollow_checker.py --check-list accounts.txt --timings slow.json
+```
+
+| Setting | Default | What it controls |
+|---|---|---|
+| `min_delay` / `max_delay` | 4.5 / 9 s | Random pause between profiles |
+| `batch_size` | 60 | Profiles between longer pauses, randomised by up to 30% |
+| `batch_pause` | 180 s | Base length of those pauses once throttling has started |
+| `settle_ms` | 1200 ms | Wait after a page loads before reading it |
+| `page_timeout` | 45000 ms | Give up on a page after this long |
+
+Settings are validated before anything runs, and a bad value changes nothing.
+Going faster than has been measured prints a warning rather than refusing: at
+2.5–6 s the checker was walled after 1,184 and then 503 profiles.
+`run_until_done.py` passes any of these flags straight through.
+
+## Keep-list
+
+Some people you will never unfollow, whatever the numbers say. Your Instagram
+close friends and favourites are applied automatically, because they come in
+the export. For anyone else, star the name in the workbench or the shortlist.
+
+Stars live in the browser, and clearing site data wipes them. **Export
+keep-list** saves them, along with your click counts, to a JSON file.
+**Import** merges one back in: it adds to what the browser already has and
+never overwrites, and a click count only ever goes up. Point the reports at the
+same file and starred accounts leave the unfollow shortlist:
+
+```json
+{ "keep_file": "~/Downloads/ig-keep-list.json" }
+```
+
+`keep` in the config takes usernames directly, and a plain text file with one
+name per line works as a `keep_file` too.
+
 ## What it will not tell you
 
 - **When someone unfollowed you.** Instagram does not log it. Only the window

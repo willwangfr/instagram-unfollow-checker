@@ -4,6 +4,8 @@
   "latest_dir": "~/Downloads/instagram-yourname-2026-08-31-ABC123",
   "work_dir": "~/Documents/ig-analysis",
   "me": ["your name", "yourhandle", "an_older_handle"],
+  "keep": [],
+  "_keep_file": "rename to keep_file and point at ig-keep-list.json exported from the workbench",
   "snapshots": [
     {"date": "2026-02-10", "zip": "~/Downloads/instagram-yourname-2026-02-10-XXX.zip"},
     {"date": "2026-08-31", "zip": "~/Downloads/instagram-yourname-2026-08-31-ABC123.zip"}
